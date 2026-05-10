@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>배포 가이드 · 지양하월시아</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0d1117; color: #e6edf3; font-family: 'Noto Sans KR', sans-serif; font-size: 14px; padding: 24px 16px; max-width: 680px; margin: 0 auto; }
+
+h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.subtitle { color: #7d8590; font-size: 13px; margin-bottom: 32px; }
+
+.step {
+  background: #161b22; border: 1px solid #30363d;
+  border-radius: 12px; margin-bottom: 16px; overflow: hidden;
+}
+.step-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 20px; border-bottom: 1px solid #30363d;
+  background: #1c2330;
+}
+.num {
+  width: 34px; height: 34px; min-width: 34px;
+  background: #3fb950; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: #000;
+}
+.step-head-text h2 { font-size: 15px; font-weight: 600; }
+.step-head-text p { font-size: 12px; color: #7d8590; margin-top: 2px; }
+.step-body { padding: 18px 20px; }
+
+.row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.row:last-child { margin-bottom: 0; }
+.row-num { width: 22px; height: 22px; min-width: 22px; background: #30363d; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; font-family: 'DM Mono'; margin-top: 1px; }
+.row-text { font-size: 13px; line-height: 1.8; flex: 1; }
+.row-text strong { color: #3fb950; }
+.row-text code { background: #1c2330; border: 1px solid #30363d; border-radius: 4px; padding: 1px 7px; font-family: 'DM Mono'; font-size: 12px; color: #58a6ff; }
+
+.link-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #58a6ff; color: #000; border-radius: 7px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600;
+  text-decoration: none; margin-top: 8px;
+}
+.link-btn:hover { background: #79bbff; }
+.link-btn.green { background: #3fb950; }
+
+.img-placeholder {
+  background: #1c2330; border: 1px dashed #30363d;
+  border-radius: 8px; padding: 20px; text-align: center;
+  color: #7d8590; font-size: 12px; margin-top: 10px;
+}
+
+.tip {
+  background: #0d2a4a; border: 1px solid #1a4a7a;
+  border-radius: 8px; padding: 12px 14px;
+  font-size: 12px; color: #58a6ff; margin-top: 10px; line-height: 1.8;
+}
+.warn {
+  background: #3d2e0a; border: 1px solid #6a4e0a;
+  border-radius: 8px; padding: 12px 14px;
+  font-size: 12px; color: #d29922; margin-top: 10px; line-height: 1.8;
+}
+.ok-box {
+  background: #1a4a25; border: 1px solid #2d6a38;
+  border-radius: 8px; padding: 14px 16px;
+  font-size: 13px; color: #3fb950; text-align: center;
+  font-weight: 500;
+}
+</style>
+</head>
+<body>
+
+<h1>🌿 웹사이트 배포 가이드</h1>
+<p class="subtitle">직원들이 어디서든 접속 가능한 웹페이지 만들기 · 약 10분 소요</p>
+
+<!-- STEP 1 -->
+<div class="step">
+  <div class="step-head">
+    <div class="num">1</div>
+    <div class="step-head-text">
+      <h2>GitHub 가입 · 파일 올리기</h2>
+      <p>코드를 인터넷에 저장하는 공간 (무료)</p>
+    </div>
+  </div>
+  <div class="step-body">
+    <div class="row">
+      <div class="row-num">1</div>
+      <div class="row-text"><a href="https://github.com/signup" target="_blank" class="link-btn">🐙 GitHub 가입하기</a></div>
+    </div>
+    <div class="row">
+      <div class="row-num">2</div>
+      <div class="row-text">
+        가입 후 → <strong>New repository</strong> 클릭<br>
+        이름: <code>haworthia</code> 입력 → <strong>Create repository</strong>
+      </div>
+    </div>
+    <div class="row">
+      <div class="row-num">3</div>
+      <div class="row-text">
+        <a href="https://desktop.github.com" target="_blank" class="link-btn">💻 GitHub Desktop 설치</a>
+        <div class="tip">GitHub Desktop은 파일 업로드를 마우스로 쉽게 할 수 있는 프로그램이에요.</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="row-num">4</div>
+      <div class="row-text">
+        GitHub Desktop 실행 → <strong>File → Add Local Repository</strong><br>
+        → <code>지양하월시아_서버</code> 폴더 선택<br>
+        → <strong>Publish repository</strong> 클릭
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 2 -->
+<div class="step">
+  <div class="step-head">
+    <div class="num">2</div>
+    <div class="step-head-text">
+      <h2>Railway 배포</h2>
+      <p>클라우드 서버에 올리기 (무료 · 24시간 운영)</p>
+    </div>
+  </div>
+  <div class="step-body">
+    <div class="row">
+      <div class="row-num">1</div>
+      <div class="row-text">
+        <a href="https://railway.app" target="_blank" class="link-btn green">🚂 Railway 가입하기</a>
+        <br>
+        <span style="font-size:12px;color:#7d8590;margin-top:4px;display:block;">→ "Login with GitHub" 클릭 (GitHub 계정으로 바로 가입)</span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="row-num">2</div>
+      <div class="row-text">
+        로그인 후 → <strong>New Project</strong> 클릭<br>
+        → <strong>Deploy from GitHub repo</strong> 선택<br>
+        → <code>haworthia</code> 선택
+      </div>
+    </div>
+    <div class="row">
+      <div class="row-num">3</div>
+      <div class="row-text">
+        자동으로 배포 시작 — 1~2분 기다리면 완료<br>
+        → <strong>Settings → Networking → Generate Domain</strong> 클릭<br>
+        → <code>haworthia-production.up.railway.app</code> 같은 주소 생성됨
+      </div>
+    </div>
+    <div class="tip">
+      💡 이 주소를 직원들에게 공유하면 끝이에요. PC가 꺼져도 24시간 작동합니다.
+    </div>
+  </div>
+</div>
+
+<!-- STEP 3 -->
+<div class="step">
+  <div class="step-head">
+    <div class="num">3</div>
+    <div class="step-head-text">
+      <h2>MacroDroid SMS 주소 업데이트</h2>
+      <p>입금 문자 수신 주소를 새 서버로 변경</p>
+    </div>
+  </div>
+  <div class="step-body">
+    <div class="row">
+      <div class="row-num">1</div>
+      <div class="row-text">
+        MacroDroid 앱 → 입금알림전송 매크로 → 액션 → HTTP URL 수정<br>
+        기존: <code>http://192.168.x.x:5000/sms</code><br>
+        변경: <code>https://[Railway주소]/sms</code>
+      </div>
+    </div>
+    <div class="warn">
+      ⚠️ Railway 주소를 받은 뒤에 변경하세요. 웹페이지 ⚙️ 초기설정 탭에 정확한 주소가 자동으로 표시됩니다.
+    </div>
+  </div>
+</div>
+
+<!-- 완료 -->
+<div class="ok-box">
+  ✅ 완료! 이제 직원들은 Railway 주소만 북마크하면 어디서든 접속 가능합니다.
+</div>
+
+<div style="margin-top:20px;font-size:12px;color:#7d8590;line-height:2;">
+  Railway 무료 플랜: 월 $5 크레딧 제공 (소규모 사용 시 무료로 충분)<br>
+  데이터는 Railway 서버에 저장되며, 재배포 시 초기화될 수 있습니다.<br>
+  중요한 데이터는 배송관리 탭에서 엑셀로 주기적으로 백업하세요.
+</div>
+
+</body>
+</html>

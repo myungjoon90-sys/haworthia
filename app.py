@@ -1,0 +1,488 @@
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+from apscheduler.schedulers.background import BackgroundScheduler
+import openpyxl
+from openpyxl.styles import PatternFill, Font
+from io import BytesIO
+from datetime import datetime, timedelta
+import logging
+import os
+import socket
+
+from database import init_db, get_conn
+from imweb_api import get_paid_orders, extract_order_info
+from sms_parser import parse_sms
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__, static_folder='static')
+CORS(app)
+
+# ══════════════════════════════════════════════════════════════════
+#  메인 페이지 서빙
+# ══════════════════════════════════════════════════════════════════
+@app.route('/')
+def index():
+    return send_file('index.html')
+
+
+# ══════════════════════════════════════════════════════════════════
+#  SMS Webhook  ← MacroDroid가 여기로 POST 전송
+# ══════════════════════════════════════════════════════════════════
+@app.route('/sms', methods=['POST'])
+def receive_sms():
+    data = request.get_json(force=True) or {}
+    body      = data.get('body', '')
+    sender    = data.get('sender', '')
+    recv_time = data.get('time', datetime.now().isoformat())
+
+    parsed = parse_sms(body)
+
+    conn = get_conn()
+    conn.execute(
+        '''INSERT INTO sms_payments (sender, body, parsed_name, parsed_amount, received_at)
+           VALUES (?, ?, ?, ?, ?)''',
+        (sender, body,
+         parsed['name']   if parsed else None,
+         parsed['amount'] if parsed else None,
+         recv_time)
+    )
+    conn.commit()
+    conn.close()
+
+    if parsed:
+        match_sms_to_order(parsed, recv_time)
+        logger.info(f"📩 SMS 입금: {parsed['bank']} {parsed['name']} {parsed['amount']:,}원")
+    else:
+        logger.info(f"📩 SMS 수신 (파싱 불가): {body[:40]}")
+
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  거래명세표 업로드
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/session/upload', methods=['POST'])
+def upload_session():
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+
+    file      = request.files['file']
+    live_date = request.form.get('live_date', datetime.now().strftime('%Y-%m-%d'))
+
+    try:
+        wb = openpyxl.load_workbook(file, data_only=True)
+        ws = wb.active
+        orders = parse_invoice_excel(ws)
+    except Exception as e:
+        return jsonify({'error': f'엑셀 파싱 오류: {e}'}), 400
+
+    live_dt     = datetime.strptime(live_date, '%Y-%m-%d')
+    check_start = (live_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+    check_end   = (live_dt + timedelta(days=7)).strftime('%Y-%m-%d')
+
+    conn = get_conn()
+    c = conn.execute(
+        '''INSERT INTO live_sessions (filename, live_date, check_start, check_end, created_at)
+           VALUES (?, ?, ?, ?, ?)''',
+        (file.filename, live_date, check_start, check_end, datetime.now().isoformat())
+    )
+    session_id = c.lastrowid
+
+    for o in orders:
+        conn.execute(
+            '''INSERT INTO orders (session_id, buyer_name, item, amount, pay_type, status)
+               VALUES (?, ?, ?, ?, ?, 'pending')''',
+            (session_id, o['name'], o['item'], o['amount'], o.get('pay_type', ''))
+        )
+
+    conn.commit()
+    conn.close()
+
+    logger.info(f"📋 세션 등록: {file.filename} ({len(orders)}명, {check_start}~{check_end})")
+
+    # 업로드 즉시 한 번 확인 실행
+    run_auto_check()
+
+    return jsonify({
+        'ok': True,
+        'session_id': session_id,
+        'orders_count': len(orders),
+        'check_start': check_start,
+        'check_end': check_end
+    })
+
+
+def parse_invoice_excel(ws):
+    """거래명세표 엑셀에서 구매자/금액 파싱"""
+    rows = list(ws.values)
+    orders = []
+
+    header_idx = name_col = amount_col = item_col = -1
+
+    NAME_HINTS   = ['이름', '구매자', '닉네임', '성함']
+    AMOUNT_HINTS = ['금액', '합계', '가격', '총액', '결제']
+    ITEM_HINTS   = ['상품', '품목', '내역', '식물']
+
+    for i, row in enumerate(rows[:15]):
+        if not row:
+            continue
+        cells = [str(c or '').strip() for c in row]
+        ni = next((j for j, c in enumerate(cells) if any(h in c for h in NAME_HINTS)), -1)
+        ai = next((j for j, c in enumerate(cells) if any(h in c for h in AMOUNT_HINTS)), -1)
+        if ni >= 0 and ai >= 0:
+            header_idx = i
+            name_col   = ni
+            amount_col = ai
+            item_col   = next((j for j, c in enumerate(cells) if any(h in c for h in ITEM_HINTS)), -1)
+            break
+
+    if header_idx < 0:
+        return orders
+
+    for row in rows[header_idx + 1:]:
+        if not row or all((c is None or str(c).strip() == '') for c in row):
+            continue
+        row = list(row)
+
+        name = str(row[name_col] or '').strip() if name_col < len(row) else ''
+        try:
+            raw  = str(row[amount_col] or '').replace(',', '').replace('원', '')
+            amt  = int(float(raw))
+        except Exception:
+            continue
+        item = str(row[item_col] or '').strip() if item_col >= 0 and item_col < len(row) else ''
+
+        if name and amt > 0:
+            orders.append({'name': name, 'item': item, 'amount': amt})
+
+    return orders
+
+
+# ══════════════════════════════════════════════════════════════════
+#  세션 목록
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/sessions', methods=['GET'])
+def get_sessions():
+    conn = get_conn()
+    sessions = conn.execute('SELECT * FROM live_sessions ORDER BY created_at DESC').fetchall()
+    result = []
+    for s in sessions:
+        s = dict(s)
+        orders = conn.execute('SELECT * FROM orders WHERE session_id=?', (s['id'],)).fetchall()
+        s['orders']    = [dict(o) for o in orders]
+        s['confirmed'] = sum(1 for o in s['orders'] if o['status'] == 'confirmed')
+        s['pending']   = sum(1 for o in s['orders'] if o['status'] == 'pending')
+        s['total']     = len(s['orders'])
+        result.append(s)
+    conn.close()
+    return jsonify(result)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  배송 목록
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/delivery', methods=['GET'])
+def get_delivery():
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+
+    sql = '''SELECT o.id, o.buyer_name, o.item, o.amount, o.pay_type,
+                    o.confirmed_at, o.bank_date, ls.live_date, ls.filename
+             FROM orders o
+             JOIN live_sessions ls ON o.session_id = ls.id
+             WHERE o.status = 'confirmed' '''
+    params = []
+    if session_id:
+        sql += ' AND o.session_id = ?'
+        params.append(session_id)
+    sql += ' ORDER BY o.confirmed_at DESC'
+
+    items = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify([dict(i) for i in items])
+
+
+@app.route('/api/delivery/excel', methods=['GET'])
+def download_delivery_excel():
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+
+    sql = '''SELECT o.buyer_name, o.item, o.amount, o.pay_type, o.confirmed_at, ls.live_date
+             FROM orders o
+             JOIN live_sessions ls ON o.session_id = ls.id
+             WHERE o.status = 'confirmed' '''
+    params = []
+    if session_id:
+        sql += ' AND o.session_id = ?'
+        params.append(session_id)
+    sql += ' ORDER BY o.confirmed_at DESC'
+
+    items = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '배송목록'
+
+    # 헤더
+    headers = ['구매자명', '상품', '금액', '결제방법', '입금확인일시', '라이브날짜']
+    header_fill = PatternFill(fill_type='solid', fgColor='1F6B2E')
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.fill   = header_fill
+        cell.font   = Font(color='FFFFFF', bold=True)
+
+    # 데이터
+    pay_labels = {'card': '카드결제', 'transfer': '계좌이체', '': ''}
+    for ri, item in enumerate(items, 2):
+        row = list(item)
+        row[3] = pay_labels.get(row[3], row[3])
+        for ci, val in enumerate(row, 1):
+            ws.cell(row=ri, column=ci, value=val)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    fname = f'배송목록_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ══════════════════════════════════════════════════════════════════
+#  닉네임 매핑
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/mappings', methods=['GET'])
+def get_mappings():
+    conn = get_conn()
+    rows = conn.execute('SELECT * FROM nick_mappings ORDER BY nickname').fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/mappings', methods=['POST'])
+def add_mapping():
+    data = request.get_json(force=True) or {}
+    conn = get_conn()
+    conn.execute('INSERT OR REPLACE INTO nick_mappings (nickname, realname) VALUES (?, ?)',
+                 (data['nickname'], data['realname']))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/mappings/<nickname>', methods=['DELETE'])
+def delete_mapping(nickname):
+    conn = get_conn()
+    conn.execute('DELETE FROM nick_mappings WHERE nickname=?', (nickname,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  수동 확인 실행 버튼
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/check/run', methods=['POST'])
+def manual_check():
+    run_auto_check()
+    return jsonify({'ok': True, 'message': '입금확인 완료'})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  SMS 수신 목록 (모니터링용)
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/sms/recent', methods=['GET'])
+def recent_sms():
+    conn = get_conn()
+    rows = conn.execute('''SELECT * FROM sms_payments
+                           ORDER BY received_at DESC LIMIT 30''').fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+# ══════════════════════════════════════════════════════════════════
+#  상태 요약
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/myip', methods=['GET'])
+def get_my_ip():
+    """이 PC의 로컬 IP 자동 감지"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        ip = "127.0.0.1"
+    return jsonify({'ip': ip, 'sms_url': f'http://{ip}:5000/sms'})
+
+
+@app.route('/api/status', methods=['GET'])
+def get_status():
+    conn = get_conn()
+    total     = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    confirmed = conn.execute("SELECT COUNT(*) FROM orders WHERE status='confirmed'").fetchone()[0]
+    pending   = conn.execute("SELECT COUNT(*) FROM orders WHERE status='pending'").fetchone()[0]
+    sms_today = conn.execute(
+        "SELECT COUNT(*) FROM sms_payments WHERE DATE(received_at)=DATE('now')"
+    ).fetchone()[0]
+    conn.close()
+    return jsonify({'total': total, 'confirmed': confirmed, 'pending': pending, 'sms_today': sms_today})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  핵심 매칭 로직
+# ══════════════════════════════════════════════════════════════════
+def resolve_names(conn, name):
+    """닉네임 → 실명 매핑 포함한 검색 이름 목록"""
+    names = [name]
+    row = conn.execute('SELECT realname FROM nick_mappings WHERE nickname=?', (name,)).fetchone()
+    if row:
+        names.append(row['realname'])
+    return names
+
+
+def amount_matches(paid, ordered):
+    """금액 일치 여부: 정확 일치 or 배송비 4000원 포함 or 100원 이하 오차"""
+    diff = abs(paid - ordered)
+    return diff == 0 or diff == 4000 or diff <= 100
+
+
+def match_sms_to_order(parsed, recv_time):
+    """SMS 입금 → 대기중 주문 매칭"""
+    conn = get_conn()
+    try:
+        names = resolve_names(conn, parsed['name'])
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        for name in names:
+            order = conn.execute('''
+                SELECT o.* FROM orders o
+                JOIN live_sessions ls ON o.session_id = ls.id
+                WHERE o.status = 'pending'
+                  AND (o.buyer_name = ? OR o.buyer_name LIKE ?)
+                  AND ? BETWEEN ls.check_start AND ls.check_end
+                LIMIT 1
+            ''', (name, f'%{name}%', today)).fetchone()
+
+            if order and amount_matches(parsed['amount'], order['amount']):
+                conn.execute('''UPDATE orders
+                                SET status='confirmed', confirmed_at=?, pay_type='transfer', bank_date=?
+                                WHERE id=?''',
+                             (datetime.now().isoformat(), recv_time, order['id']))
+                # SMS matched 표시
+                conn.execute('''UPDATE sms_payments SET matched=1
+                                WHERE parsed_name=? AND parsed_amount=? AND matched=0''',
+                             (parsed['name'], parsed['amount']))
+                conn.commit()
+                logger.info(f"✅ SMS 매칭 성공: {order['buyer_name']} {order['amount']:,}원")
+                return
+    finally:
+        conn.close()
+
+
+def run_auto_check():
+    """매일 오전 11시 + 수동 실행: 아임웹 카드결제 + 미매칭 SMS 재대조"""
+    logger.info("🔄 자동 입금확인 시작...")
+    today    = datetime.now().strftime('%Y-%m-%d')
+    today_ym = today.replace('-', '')
+
+    conn = get_conn()
+    try:
+        # 오늘 날짜가 확인 기간에 포함된 활성 세션
+        sessions = conn.execute('''
+            SELECT * FROM live_sessions
+            WHERE ? BETWEEN check_start AND check_end
+        ''', (today,)).fetchall()
+
+        for session in sessions:
+            session = dict(session)
+            sid = session['id']
+            logger.info(f"  세션: {session['filename']}")
+
+            # ── 1. 아임웹 카드결제 확인 ────────────────────────────────
+            try:
+                imweb_orders = get_paid_orders(
+                    session['check_start'].replace('-', ''),
+                    today_ym
+                )
+                for iorder in imweb_orders:
+                    info = extract_order_info(iorder)
+                    if not info['name'] or not info['amount']:
+                        continue
+
+                    names = resolve_names(conn, info['name'])
+                    for name in names:
+                        order = conn.execute('''
+                            SELECT * FROM orders
+                            WHERE session_id=? AND status='pending'
+                              AND (buyer_name=? OR buyer_name LIKE ?)
+                            LIMIT 1
+                        ''', (sid, name, f'%{name}%')).fetchone()
+
+                        if order and amount_matches(info['amount'], order['amount']):
+                            conn.execute('''UPDATE orders
+                                           SET status='confirmed', confirmed_at=?, pay_type='card'
+                                           WHERE id=?''',
+                                         (info['paid_at'], order['id']))
+                            logger.info(f"  ✅ 카드결제: {order['buyer_name']} {order['amount']:,}원")
+                            break
+            except Exception as e:
+                logger.error(f"  아임웹 조회 오류: {e}")
+
+            # ── 2. 미매칭 SMS 재대조 ───────────────────────────────────
+            pending_orders = conn.execute(
+                "SELECT * FROM orders WHERE session_id=? AND status='pending'", (sid,)
+            ).fetchall()
+
+            unmatched_sms = conn.execute(
+                "SELECT * FROM sms_payments WHERE matched=0 AND parsed_name IS NOT NULL"
+            ).fetchall()
+
+            for order in pending_orders:
+                order = dict(order)
+                names = resolve_names(conn, order['buyer_name'])
+
+                for sms in unmatched_sms:
+                    sms = dict(sms)
+                    if sms['parsed_name'] in names or \
+                       any(sms['parsed_name'] in n or n in sms['parsed_name'] for n in names):
+                        if amount_matches(sms['parsed_amount'], order['amount']):
+                            conn.execute('''UPDATE orders
+                                           SET status='confirmed', confirmed_at=?,
+                                               pay_type='transfer', bank_date=?
+                                           WHERE id=?''',
+                                         (datetime.now().isoformat(), sms['received_at'], order['id']))
+                            conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (sms['id'],))
+                            logger.info(f"  ✅ SMS 재매칭: {order['buyer_name']} {order['amount']:,}원")
+                            break
+
+        conn.commit()
+        logger.info("✅ 자동 입금확인 완료")
+
+    except Exception as e:
+        logger.error(f"자동확인 오류: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════
+#  서버 시작
+# ══════════════════════════════════════════════════════════════════
+if __name__ == '__main__':
+    init_db()
+
+    scheduler = BackgroundScheduler(timezone='Asia/Seoul')
+    scheduler.add_job(run_auto_check, 'cron', hour=11, minute=0,
+                      id='daily_check', replace_existing=True)
+    scheduler.start()
+    logger.info("⏰ 스케줄러 시작 (매일 오전 11:00 자동 확인)")
+
+    PORT = int(os.environ.get('PORT', 5000))
+    logger.info(f"🌿 지양하월시아 서버 시작! 포트: {PORT}")
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
