@@ -13,10 +13,13 @@ from database import init_db, get_conn
 from imweb_api import get_paid_orders, extract_order_info
 from sms_parser import parse_sms
 
+import sys
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
+    datefmt='%H:%M:%S',
+    stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
 
@@ -36,32 +39,43 @@ def index():
 # ══════════════════════════════════════════════════════════════════
 @app.route('/sms', methods=['POST'])
 def receive_sms():
-    data = request.get_json(force=True) or {}
-    body      = data.get('body', '')
-    sender    = data.get('sender', '')
-    recv_time = data.get('time', datetime.now().isoformat())
+    try:
+        data = request.get_json(force=True) or {}
+        body      = data.get('body', '')
+        sender    = data.get('sender', '')
+        recv_time = data.get('time', datetime.now().isoformat())
 
-    parsed = parse_sms(body)
+        parsed = parse_sms(body)
 
-    conn = get_conn()
-    conn.execute(
-        '''INSERT INTO sms_payments (sender, body, parsed_name, parsed_amount, received_at)
-           VALUES (?, ?, ?, ?, ?)''',
-        (sender, body,
-         parsed['name']   if parsed else None,
-         parsed['amount'] if parsed else None,
-         recv_time)
-    )
-    conn.commit()
-    conn.close()
+        try:
+            conn = get_conn()
+            conn.execute(
+                '''INSERT INTO sms_payments (sender, body, parsed_name, parsed_amount, received_at)
+                   VALUES (?, ?, ?, ?, ?)''',
+                (sender, body,
+                 parsed['name']   if parsed else None,
+                 parsed['amount'] if parsed else None,
+                 recv_time)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"SMS DB 저장 오류: {e}")
 
-    if parsed:
-        match_sms_to_order(parsed, recv_time)
-        logger.info(f"📩 SMS 입금: {parsed['bank']} {parsed['name']} {parsed['amount']:,}원")
-    else:
-        logger.info(f"📩 SMS 수신 (파싱 불가): {body[:40]}")
+        if parsed:
+            try:
+                match_sms_to_order(parsed, recv_time)
+                logger.info(f"SMS 입금: {parsed['bank']} {parsed['name']} {parsed['amount']:,}원")
+            except Exception as e:
+                logger.error(f"SMS 매칭 오류: {e}")
+        else:
+            logger.info(f"SMS 수신 (파싱불가): {body[:40]}")
 
-    return jsonify({'ok': True})
+        return jsonify({'ok': True})
+
+    except Exception as e:
+        logger.error(f"SMS 수신 처리 오류: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 200
 
 
 # ══════════════════════════════════════════════════════════════════
