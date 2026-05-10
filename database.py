@@ -50,6 +50,6 @@ def init_db():
     print("✅ DB 초기화 완료")
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
