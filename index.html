@@ -898,14 +898,16 @@ async function loadAutoSessionFilter() {
 async function loadAutoPage() {
   const sid = document.getElementById('autoSessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
-  loadTimeline(sid);
   try {
-    const [pendingRes, confirmedRes] = await Promise.all([
+    const [pendingRes, confirmedRes, sessionsRes] = await Promise.all([
       fetch(API + '/api/orders/pending' + qs),
-      fetch(API + '/api/orders/confirmed' + qs)
+      fetch(API + '/api/orders/confirmed' + qs),
+      fetch(API + '/api/sessions')
     ]);
-    const pending = await pendingRes.json();
+    const pending   = await pendingRes.json();
     const confirmed = await confirmedRes.json();
+    const sessions  = await sessionsRes.json();
+
     renderPending(pending);
     renderConfirmed(confirmed);
     document.getElementById('auto-total').textContent = pending.length + confirmed.length;
@@ -916,67 +918,74 @@ async function loadAutoPage() {
       document.getElementById('badge-auto').textContent = pending.length;
       document.getElementById('badge-auto').classList.add('show');
     } else { document.getElementById('badge-auto').classList.remove('show'); }
+
+    // 타임라인: 세션 데이터로 직접 렌더링
+    const targetId = sid ? parseInt(sid) : null;
+    const session = targetId ? sessions.find(s => s.id === targetId) : sessions[0];
+    if (session) renderTimeline(session);
+    else document.getElementById('timelineWrap').style.display = 'none';
+
   } catch(e) {
     document.getElementById('pendingTbody').innerHTML =
       '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">서버 연결 안됨</td></tr>';
   }
 }
 
-async function loadTimeline(sid) {
-  const qs = sid ? '?session_id=' + sid : '';
-  try {
-    const r = await fetch(API + '/api/check/logs' + qs);
-    const d = await r.json();
-    if (!d.session) { document.getElementById('timelineWrap').style.display = 'none'; return; }
-    document.getElementById('timelineWrap').style.display = 'block';
-    renderTimeline(d.days, d.session);
-  } catch(e) {}
-}
-
-function renderTimeline(days, session) {
-  const row = document.getElementById('timelineRow');
+function renderTimeline(session) {
+  const wrap = document.getElementById('timelineWrap');
+  const row  = document.getElementById('timelineRow');
   const weekdays = ['일','월','화','수','목','금','토'];
 
-  row.innerHTML = days.map(d => {
-    const date = new Date(d.date);
-    const wd = weekdays[date.getDay()];
-    const md = `${date.getMonth()+1}/${date.getDate()}`;
-    const log = d.log;
+  const checkStart = new Date(session.check_start + 'T00:00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
 
-    let dotClass, emoji, labelText, labelClass;
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(checkStart); d.setDate(d.getDate() + i); d.setHours(0,0,0,0);
+    const wd = weekdays[d.getDay()];
+    const md = `${d.getMonth()+1}/${d.getDate()}`;
+    let status = d < today ? 'past' : d.getTime()===today.getTime() ? 'today' : 'future';
+    days.push({ d, wd, md, status, dateStr: d.toISOString().slice(0,10) });
+  }
 
-    if (d.day_status === 'future') {
-      dotClass = 'future'; emoji = ''; labelText = '예정'; labelClass = 'future';
-    } else if (d.day_status === 'today') {
-      dotClass = 'today'; emoji = '🔵'; labelText = '오늘\n대기중'; labelClass = 'today';
-    } else if (d.day_status === 'missed') {
-      dotClass = 'missed'; emoji = '🟡'; labelText = '미실행'; labelClass = 'missed';
+  // 먼저 날짜만 표시
+  renderTimelineDays(row, days, {}, weekdays);
+  wrap.style.display = 'block';
+
+  // 로그 데이터 fetch 후 업데이트
+  fetch(API + '/api/check/logs?session_id=' + session.id)
+    .then(r => r.json())
+    .then(data => {
+      const logMap = {};
+      if (data.days) data.days.forEach(dl => { if (dl.log) logMap[dl.date] = dl.log; });
+      renderTimelineDays(row, days, logMap);
+    }).catch(() => {});
+}
+
+function renderTimelineDays(row, days, logMap) {
+  const weekdays = ['일','월','화','수','목','금','토'];
+  row.innerHTML = days.map(({ d, wd, md, status, dateStr }) => {
+    const log = logMap[dateStr];
+    let dotClass, emoji, label, labelClass;
+
+    if (status === 'future') {
+      dotClass='future'; emoji='⬜'; label='예정'; labelClass='future';
     } else if (log) {
-      const hasErr = log.imweb_status === 'error' || log.sms_status === 'error';
-      if (hasErr) {
-        dotClass = 'done-err'; emoji = '🔴';
-        labelText = `오류\n${log.check_time ? log.check_time.slice(0,5) : ''}`;
-        labelClass = 'err';
-      } else {
-        const total = (log.imweb_confirmed || 0) + (log.sms_confirmed || 0);
-        dotClass = 'done-ok'; emoji = '🟢';
-        labelText = `완료 ${total}건\n${log.check_time ? log.check_time.slice(0,5) : ''}`;
-        labelClass = 'ok';
-      }
+      const hasErr = log.imweb_status==='error'||log.sms_status==='error';
+      const t = (log.imweb_confirmed||0)+(log.sms_confirmed||0);
+      if (hasErr) { dotClass='done-err'; emoji='🔴'; label=`오류\n${(log.check_time||'').slice(0,5)}`; labelClass='err'; }
+      else { dotClass='done-ok'; emoji='🟢'; label=`완료 ${t}건\n${(log.check_time||'').slice(0,5)}`; labelClass='ok'; }
+    } else if (status === 'today') {
+      dotClass='today'; emoji='🔵'; label='오늘\n대기중'; labelClass='today';
     } else {
-      dotClass = 'missed'; emoji = '🟡'; labelText = '미실행'; labelClass = 'missed';
+      dotClass='missed'; emoji='🟡'; label='미실행'; labelClass='missed';
     }
 
-    const tooltip = log
-      ? `아임웹:${log.imweb_confirmed||0}건 SMS:${log.sms_confirmed||0}건 (${log.check_time||''})`
-      : (d.day_status === 'future' ? '아직 예정된 날짜' : '실행 기록 없음');
-
-    return `
-      <div class="tl-day" title="${tooltip}">
-        <div class="tl-date">${wd}<br>${md}</div>
-        <div class="tl-dot ${dotClass}" style="font-size:20px;">${emoji}</div>
-        <div class="tl-label ${labelClass}" style="white-space:pre;">${labelText}</div>
-      </div>`;
+    return `<div class="tl-day">
+      <div class="tl-date">${wd}<br>${md}</div>
+      <div class="tl-dot ${dotClass}" style="font-size:18px;line-height:48px;">${emoji}</div>
+      <div class="tl-label ${labelClass}" style="white-space:pre;font-size:10px;text-align:center;margin-top:4px;">${label}</div>
+    </div>`;
   }).join('');
 }
 
