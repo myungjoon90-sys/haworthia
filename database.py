@@ -45,6 +45,19 @@ def init_db():
         realname TEXT
     )''')
 
+    c.execute('''CREATE TABLE IF NOT EXISTS check_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER,
+        check_date TEXT,
+        check_time TEXT,
+        imweb_status TEXT DEFAULT 'pending',
+        sms_status TEXT DEFAULT 'pending',
+        imweb_confirmed INTEGER DEFAULT 0,
+        sms_confirmed INTEGER DEFAULT 0,
+        error_message TEXT,
+        FOREIGN KEY (session_id) REFERENCES live_sessions(id)
+    )''')
+
     conn.commit()
     conn.close()
     print("✅ DB 초기화 완료")
