@@ -201,8 +201,59 @@ def get_sessions():
 # ══════════════════════════════════════════════════════════════════
 #  배송 목록
 # ══════════════════════════════════════════════════════════════════
-@app.route('/api/delivery', methods=['GET'])
-def get_delivery():
+@app.route('/api/orders/pending', methods=['GET'])
+def get_pending_orders():
+    """미확인 대기 주문 - 구매자별 합산"""
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+
+    sql = '''SELECT o.buyer_name, 
+                    GROUP_CONCAT(o.item, ' / ') as items,
+                    SUM(o.amount) as total_amount,
+                    COUNT(*) as item_count,
+                    ls.live_date, ls.filename, o.session_id
+             FROM orders o
+             JOIN live_sessions ls ON o.session_id = ls.id
+             WHERE o.status = 'pending' '''
+    params = []
+    if session_id:
+        sql += ' AND o.session_id = ?'
+        params.append(session_id)
+    sql += ' GROUP BY o.session_id, o.buyer_name ORDER BY o.buyer_name'
+
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/orders/confirmed', methods=['GET'])
+def get_confirmed_orders():
+    """입금확인 완료 주문 - 구매자별 합산"""
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+
+    sql = '''SELECT o.buyer_name,
+                    GROUP_CONCAT(o.item, ' / ') as items,
+                    SUM(o.amount) as total_amount,
+                    COUNT(*) as item_count,
+                    MAX(o.pay_type) as pay_type,
+                    MAX(o.confirmed_at) as confirmed_at,
+                    ls.live_date, ls.filename, o.session_id
+             FROM orders o
+             JOIN live_sessions ls ON o.session_id = ls.id
+             WHERE o.status = 'confirmed' '''
+    params = []
+    if session_id:
+        sql += ' AND o.session_id = ?'
+        params.append(session_id)
+    sql += ' GROUP BY o.session_id, o.buyer_name ORDER BY o.confirmed_at DESC'
+
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+
     session_id = request.args.get('session_id')
     conn = get_conn()
 
