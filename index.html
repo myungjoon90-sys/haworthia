@@ -981,6 +981,7 @@ function renderTimeline(days, session) {
 }
 
 
+function renderPending(items) {
   const tbody = document.getElementById('pendingTbody');
   if (!items.length) {
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--green);padding:30px;">🎉 모두 입금확인 완료!</td></tr>';
