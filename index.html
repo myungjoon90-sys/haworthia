@@ -1000,7 +1000,7 @@ function renderPending(items) {
     <tr>
       <td><strong>${i.buyer_name}</strong></td>
       <td style="font-size:11px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
-      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
       <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.live_date||'-'}</td>
     </tr>`).join('');
 }
@@ -1016,7 +1016,7 @@ function renderConfirmed(items) {
     <tr>
       <td><strong>${i.buyer_name}</strong></td>
       <td style="font-size:11px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
-      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
       <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
       <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.confirmed_at?i.confirmed_at.slice(0,16).replace('T',' '):'-'}</td>
     </tr>`).join('');
