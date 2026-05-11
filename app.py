@@ -277,6 +277,25 @@ def get_confirmed_orders():
     return jsonify([dict(i) for i in items])
 
 
+@app.route('/api/delivery', methods=['GET'])
+def get_delivery():
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+    sql = '''SELECT o.id, o.buyer_name, o.item, o.amount, o.pay_type,
+                    o.confirmed_at, o.bank_date, ls.live_date, ls.filename
+             FROM orders o
+             JOIN live_sessions ls ON o.session_id = ls.id
+             WHERE o.status = 'confirmed' '''
+    params = []
+    if session_id:
+        sql += ' AND o.session_id = ?'
+        params.append(session_id)
+    sql += ' ORDER BY o.confirmed_at DESC'
+    items = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify([dict(i) for i in items])
+
+
 @app.route('/api/delivery/excel', methods=['GET'])
 def download_delivery_excel():
     session_id = request.args.get('session_id')
@@ -356,7 +375,13 @@ def delete_mapping(nickname):
 # ══════════════════════════════════════════════════════════════════
 #  수동 확인 실행 버튼
 # ══════════════════════════════════════════════════════════════════
-@app.route('/api/check/logs', methods=['GET'])
+@app.route('/api/check/run', methods=['POST'])
+def manual_check():
+    run_auto_check()
+    return jsonify({'ok': True, 'message': '입금확인 완료'})
+
+
+
 def get_check_logs():
     """세션별 7일 자동확인 실행 로그"""
     session_id = request.args.get('session_id')
@@ -512,6 +537,9 @@ def run_auto_check():
             SELECT * FROM live_sessions
             WHERE ? BETWEEN check_start AND check_end
         ''', (today,)).fetchall()
+
+        imweb_confirmed = 0
+        sms_confirmed = 0
 
         for session in sessions:
             session = dict(session)
