@@ -227,7 +227,65 @@ input::placeholder { color: var(--dim); }
 .empty .empty-icon { font-size: 36px; margin-bottom: 10px; }
 .empty p { font-size: 13px; }
 
-/* ─── MacroDroid Guide ───────────────────────────────────────── */
+/* ─── 7일 타임라인 ───────────────────────────────────────────── */
+.timeline-wrap {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px; margin-bottom: 16px;
+}
+.timeline-title {
+  font-size: 13px; font-weight: 500; margin-bottom: 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.timeline-row {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+}
+.tl-day {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.tl-date {
+  font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace;
+  text-align: center;
+}
+.tl-dot {
+  width: 100%; height: 48px; border-radius: 8px;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; font-size: 18px; position: relative;
+  transition: all .2s; cursor: default;
+}
+.tl-dot.future {
+  background: var(--surface2); border: 1px dashed var(--border);
+}
+.tl-dot.today {
+  background: var(--blue-dim); border: 1px solid var(--blue-border);
+  animation: pulse 2s infinite;
+}
+.tl-dot.done-ok {
+  background: var(--green-dim); border: 1px solid var(--green-border);
+}
+.tl-dot.done-err {
+  background: var(--red-dim); border: 1px solid var(--red-border);
+}
+.tl-dot.missed {
+  background: var(--yellow-dim); border: 1px solid var(--yellow-border);
+}
+.tl-label {
+  font-size: 10px; text-align: center; line-height: 1.3;
+  font-family: 'DM Mono', monospace;
+}
+.tl-label.ok { color: var(--green); }
+.tl-label.err { color: var(--red); }
+.tl-label.today { color: var(--blue); }
+.tl-label.future { color: var(--dim); }
+.tl-label.missed { color: var(--yellow); }
+.tl-connector {
+  height: 2px; background: var(--border); margin: 0 -3px;
+  position: relative; top: -33px; z-index: 0;
+  grid-column: 1 / -1;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(88,166,255,0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(88,166,255,0); }
+}
 .setup-block {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; margin-bottom: 12px; overflow: hidden;
@@ -341,6 +399,22 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <div style="font-size:12px;color:var(--muted);margin-top:10px;">
         📌 등록하면 <strong style="color:var(--text)">방송일 +1일부터 7일간</strong> 매일 오전 11시에 아임웹 카드결제 + SMS 입금을 자동 확인합니다.
       </div>
+    </div>
+  </div>
+
+  <!-- 7일 자동확인 타임라인 -->
+  <div class="timeline-wrap" id="timelineWrap" style="display:none;">
+    <div class="timeline-title">
+      <span>📅 7일 자동확인 진행현황</span>
+      <span style="font-size:11px;color:var(--muted);">매일 오전 11:00 자동 실행</span>
+    </div>
+    <div class="timeline-row" id="timelineRow"></div>
+    <div style="display:flex;gap:16px;margin-top:12px;font-size:11px;color:var(--muted);flex-wrap:wrap;">
+      <span>🟢 정상완료</span>
+      <span>🔴 오류발생</span>
+      <span>🟡 미실행</span>
+      <span>🔵 오늘(대기중)</span>
+      <span>⬜ 예정</span>
     </div>
   </div>
 
@@ -824,6 +898,7 @@ async function loadAutoSessionFilter() {
 async function loadAutoPage() {
   const sid = document.getElementById('autoSessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
+  loadTimeline(sid);
   try {
     const [pendingRes, confirmedRes] = await Promise.all([
       fetch(API + '/api/orders/pending' + qs),
@@ -847,7 +922,65 @@ async function loadAutoPage() {
   }
 }
 
-function renderPending(items) {
+async function loadTimeline(sid) {
+  const qs = sid ? '?session_id=' + sid : '';
+  try {
+    const r = await fetch(API + '/api/check/logs' + qs);
+    const d = await r.json();
+    if (!d.session) { document.getElementById('timelineWrap').style.display = 'none'; return; }
+    document.getElementById('timelineWrap').style.display = 'block';
+    renderTimeline(d.days, d.session);
+  } catch(e) {}
+}
+
+function renderTimeline(days, session) {
+  const row = document.getElementById('timelineRow');
+  const weekdays = ['일','월','화','수','목','금','토'];
+
+  row.innerHTML = days.map(d => {
+    const date = new Date(d.date);
+    const wd = weekdays[date.getDay()];
+    const md = `${date.getMonth()+1}/${date.getDate()}`;
+    const log = d.log;
+
+    let dotClass, emoji, labelText, labelClass;
+
+    if (d.day_status === 'future') {
+      dotClass = 'future'; emoji = ''; labelText = '예정'; labelClass = 'future';
+    } else if (d.day_status === 'today') {
+      dotClass = 'today'; emoji = '🔵'; labelText = '오늘\n대기중'; labelClass = 'today';
+    } else if (d.day_status === 'missed') {
+      dotClass = 'missed'; emoji = '🟡'; labelText = '미실행'; labelClass = 'missed';
+    } else if (log) {
+      const hasErr = log.imweb_status === 'error' || log.sms_status === 'error';
+      if (hasErr) {
+        dotClass = 'done-err'; emoji = '🔴';
+        labelText = `오류\n${log.check_time ? log.check_time.slice(0,5) : ''}`;
+        labelClass = 'err';
+      } else {
+        const total = (log.imweb_confirmed || 0) + (log.sms_confirmed || 0);
+        dotClass = 'done-ok'; emoji = '🟢';
+        labelText = `완료 ${total}건\n${log.check_time ? log.check_time.slice(0,5) : ''}`;
+        labelClass = 'ok';
+      }
+    } else {
+      dotClass = 'missed'; emoji = '🟡'; labelText = '미실행'; labelClass = 'missed';
+    }
+
+    const tooltip = log
+      ? `아임웹:${log.imweb_confirmed||0}건 SMS:${log.sms_confirmed||0}건 (${log.check_time||''})`
+      : (d.day_status === 'future' ? '아직 예정된 날짜' : '실행 기록 없음');
+
+    return `
+      <div class="tl-day" title="${tooltip}">
+        <div class="tl-date">${wd}<br>${md}</div>
+        <div class="tl-dot ${dotClass}" style="font-size:20px;">${emoji}</div>
+        <div class="tl-label ${labelClass}" style="white-space:pre;">${labelText}</div>
+      </div>`;
+  }).join('');
+}
+
+
   const tbody = document.getElementById('pendingTbody');
   if (!items.length) {
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--green);padding:30px;">🎉 모두 입금확인 완료!</td></tr>';
