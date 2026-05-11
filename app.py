@@ -352,8 +352,53 @@ def delete_mapping(nickname):
 # ══════════════════════════════════════════════════════════════════
 #  수동 확인 실행 버튼
 # ══════════════════════════════════════════════════════════════════
-@app.route('/api/check/run', methods=['POST'])
-def manual_check():
+@app.route('/api/check/logs', methods=['GET'])
+def get_check_logs():
+    """세션별 7일 자동확인 실행 로그"""
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+
+    # 세션 정보 조회
+    if session_id:
+        session = conn.execute('SELECT * FROM live_sessions WHERE id=?', (session_id,)).fetchone()
+    else:
+        session = conn.execute('SELECT * FROM live_sessions ORDER BY created_at DESC LIMIT 1').fetchone()
+
+    if not session:
+        conn.close()
+        return jsonify({'session': None, 'days': []})
+
+    session = dict(session)
+
+    # 7일 날짜 생성
+    from datetime import date
+    start = datetime.strptime(session['check_start'], '%Y-%m-%d').date()
+    days = []
+    for i in range(7):
+        d = start + timedelta(days=i)
+        log = conn.execute(
+            'SELECT * FROM check_logs WHERE session_id=? AND check_date=? ORDER BY id DESC LIMIT 1',
+            (session['id'], str(d))
+        ).fetchone()
+        today = date.today()
+        if d < today:
+            day_status = 'done' if log else 'missed'
+        elif d == today:
+            day_status = 'today'
+        else:
+            day_status = 'future'
+
+        days.append({
+            'date': str(d),
+            'day_status': day_status,
+            'log': dict(log) if log else None
+        })
+
+    conn.close()
+    return jsonify({'session': session, 'days': days})
+
+
+
     run_auto_check()
     return jsonify({'ok': True, 'message': '입금확인 완료'})
 
@@ -452,13 +497,13 @@ def match_sms_to_order(parsed, recv_time):
 
 def run_auto_check():
     """매일 오전 11시 + 수동 실행: 아임웹 카드결제 + 미매칭 SMS 재대조"""
-    logger.info("🔄 자동 입금확인 시작...")
+    logger.info("자동 입금확인 시작...")
     today    = datetime.now().strftime('%Y-%m-%d')
     today_ym = today.replace('-', '')
+    now_time = datetime.now().strftime('%H:%M:%S')
 
     conn = get_conn()
     try:
-        # 오늘 날짜가 확인 기간에 포함된 활성 세션
         sessions = conn.execute('''
             SELECT * FROM live_sessions
             WHERE ? BETWEEN check_start AND check_end
@@ -467,19 +512,23 @@ def run_auto_check():
         for session in sessions:
             session = dict(session)
             sid = session['id']
-            logger.info(f"  세션: {session['filename']}")
+            logger.info(f"세션 확인: {session['filename']}")
 
-            # ── 1. 아임웹 카드결제 확인 ────────────────────────────────
+            imweb_status = 'success'
+            sms_status = 'success'
+            imweb_confirmed = 0
+            sms_confirmed = 0
+            error_msg = None
+
+            # ── 1. 아임웹 카드결제 확인 ──────────────────────────────
             try:
                 imweb_orders = get_paid_orders(
-                    session['check_start'].replace('-', ''),
-                    today_ym
+                    session['check_start'].replace('-', ''), today_ym
                 )
                 for iorder in imweb_orders:
                     info = extract_order_info(iorder)
                     if not info['name'] or not info['amount']:
                         continue
-
                     names = resolve_names(conn, info['name'])
                     for name in names:
                         order = conn.execute('''
@@ -488,46 +537,58 @@ def run_auto_check():
                               AND (buyer_name=? OR buyer_name LIKE ?)
                             LIMIT 1
                         ''', (sid, name, f'%{name}%')).fetchone()
-
                         if order and amount_matches(info['amount'], order['amount']):
                             conn.execute('''UPDATE orders
                                            SET status='confirmed', confirmed_at=?, pay_type='card'
-                                           WHERE id=?''',
-                                         (info['paid_at'], order['id']))
-                            logger.info(f"  ✅ 카드결제: {order['buyer_name']} {order['amount']:,}원")
+                                           WHERE id=?''', (info['paid_at'], order['id']))
+                            imweb_confirmed += 1
+                            logger.info(f"카드결제 확인: {order['buyer_name']} {order['amount']:,}원")
                             break
             except Exception as e:
-                logger.error(f"  아임웹 조회 오류: {e}")
+                imweb_status = 'error'
+                error_msg = f"아임웹:{str(e)}"
+                logger.error(f"아임웹 조회 오류: {e}")
 
-            # ── 2. 미매칭 SMS 재대조 ───────────────────────────────────
-            pending_orders = conn.execute(
-                "SELECT * FROM orders WHERE session_id=? AND status='pending'", (sid,)
-            ).fetchall()
+            # ── 2. 미매칭 SMS 재대조 ─────────────────────────────────
+            try:
+                pending_orders = conn.execute(
+                    "SELECT * FROM orders WHERE session_id=? AND status='pending'", (sid,)
+                ).fetchall()
+                unmatched_sms = conn.execute(
+                    "SELECT * FROM sms_payments WHERE matched=0 AND parsed_name IS NOT NULL"
+                ).fetchall()
+                for order in pending_orders:
+                    order = dict(order)
+                    names = resolve_names(conn, order['buyer_name'])
+                    for sms in unmatched_sms:
+                        sms = dict(sms)
+                        if sms['parsed_name'] in names or \
+                           any(sms['parsed_name'] in n or n in sms['parsed_name'] for n in names):
+                            if amount_matches(sms['parsed_amount'], order['amount']):
+                                conn.execute('''UPDATE orders
+                                               SET status='confirmed', confirmed_at=?,
+                                                   pay_type='transfer', bank_date=?
+                                               WHERE id=?''',
+                                             (datetime.now().isoformat(), sms['received_at'], order['id']))
+                                conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (sms['id'],))
+                                sms_confirmed += 1
+                                logger.info(f"SMS 재매칭: {order['buyer_name']} {order['amount']:,}원")
+                                break
+            except Exception as e:
+                sms_status = 'error'
+                error_msg = (error_msg or '') + f" SMS:{str(e)}"
+                logger.error(f"SMS 재대조 오류: {e}")
 
-            unmatched_sms = conn.execute(
-                "SELECT * FROM sms_payments WHERE matched=0 AND parsed_name IS NOT NULL"
-            ).fetchall()
-
-            for order in pending_orders:
-                order = dict(order)
-                names = resolve_names(conn, order['buyer_name'])
-
-                for sms in unmatched_sms:
-                    sms = dict(sms)
-                    if sms['parsed_name'] in names or \
-                       any(sms['parsed_name'] in n or n in sms['parsed_name'] for n in names):
-                        if amount_matches(sms['parsed_amount'], order['amount']):
-                            conn.execute('''UPDATE orders
-                                           SET status='confirmed', confirmed_at=?,
-                                               pay_type='transfer', bank_date=?
-                                           WHERE id=?''',
-                                         (datetime.now().isoformat(), sms['received_at'], order['id']))
-                            conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (sms['id'],))
-                            logger.info(f"  ✅ SMS 재매칭: {order['buyer_name']} {order['amount']:,}원")
-                            break
+            # ── 로그 기록 ─────────────────────────────────────────────
+            conn.execute('''INSERT INTO check_logs
+                (session_id, check_date, check_time, imweb_status, sms_status,
+                 imweb_confirmed, sms_confirmed, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (sid, today, now_time, imweb_status, sms_status,
+                 imweb_confirmed, sms_confirmed, error_msg))
 
         conn.commit()
-        logger.info("✅ 자동 입금확인 완료")
+        logger.info(f"자동 입금확인 완료 (카드:{imweb_confirmed} SMS:{sms_confirmed})")
 
     except Exception as e:
         logger.error(f"자동확인 오류: {e}")
