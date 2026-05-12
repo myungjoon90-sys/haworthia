@@ -286,9 +286,9 @@ def confirm_by_buyer():
     if not session_id or not buyer_name:
         return jsonify({'error': '필수 파라미터 없음'}), 400
     conn = get_conn()
-    conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='manual'
-                   WHERE session_id=? AND buyer_name=? AND status='pending',
-                 (datetime.now().isoformat(), session_id, buyer_name))
+    conn.execute(
+        "UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='manual' WHERE session_id=? AND buyer_name=? AND status='pending'",
+        (datetime.now().isoformat(), session_id, buyer_name))
     conn.commit()
     conn.close()
     logger.info(f"수동확인: {buyer_name} (session {session_id})")
