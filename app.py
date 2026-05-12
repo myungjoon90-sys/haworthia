@@ -101,7 +101,7 @@ def upload_session():
         return jsonify({'error': f'엑셀 파싱 오류: {e}'}), 400
 
     live_dt     = datetime.strptime(live_date, '%Y-%m-%d')
-    check_start = (live_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+    check_start = live_dt.strftime('%Y-%m-%d')  # 당일 포함
     check_end   = (live_dt + timedelta(days=7)).strftime('%Y-%m-%d')
 
     conn = get_conn()
@@ -606,7 +606,7 @@ def run_auto_check():
     try:
         sessions = conn.execute('''
             SELECT * FROM live_sessions
-            WHERE ? BETWEEN check_start AND check_end
+            WHERE ? BETWEEN live_date AND check_end
         ''', (today,)).fetchall()
 
         imweb_confirmed = 0
@@ -626,14 +626,22 @@ def run_auto_check():
             # ── 1. 아임웹 카드결제 확인 ──────────────────────────────
             try:
                 imweb_orders = get_paid_orders(
-                    session['check_start'].replace('-', ''), today_ym
+                    session['live_date'].replace('-', ''), today_ym
                 )
                 for iorder in imweb_orders:
                     info = extract_order_info(iorder)
-                    if not info['name'] or not info['amount']:
+                    if not info['amount']:
                         continue
-                    names = resolve_names(conn, info['name'])
-                    for name in names:
+                    # 닉네임 + 실명 + 매핑 모두 시도
+                    search_names = []
+                    if info['name']:
+                        search_names += resolve_names(conn, info['name'])
+                    if info.get('name2'):
+                        search_names += resolve_names(conn, info['name2'])
+                    search_names = list(dict.fromkeys(search_names))  # 중복 제거
+
+                    matched = False
+                    for name in search_names:
                         order = conn.execute('''
                             SELECT * FROM orders
                             WHERE session_id=? AND status='pending'
@@ -646,6 +654,7 @@ def run_auto_check():
                                            WHERE id=?''', (info['paid_at'], order['id']))
                             imweb_confirmed += 1
                             logger.info(f"카드결제 확인: {order['buyer_name']} {order['amount']:,}원")
+                            matched = True
                             break
             except Exception as e:
                 imweb_status = 'error'

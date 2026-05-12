@@ -85,31 +85,38 @@ def get_paid_orders(start_date, end_date):
 
 def extract_order_info(iorder):
     """아임웹 주문 데이터에서 핵심 정보 추출"""
-    # 주문자 이름 (다양한 필드명 대응)
+    import re as _re
     orderer = iorder.get("orderer") or {}
-    name = (
+
+    # 여러 필드 시도 (아임웹은 버전마다 필드명이 다름)
+    raw_name = (
+        iorder.get("member_id") or       # 아임웹 회원 아이디 (닉네임)
         orderer.get("name") or
         iorder.get("member_name") or
         iorder.get("orderer_name") or
         iorder.get("name") or ""
     ).strip()
 
-    # 결제 금액
+    # "문성옥(미아옹)" 형태 → 닉네임과 실명 분리
+    name2 = None
+    m = _re.search(r'\(([^)]+)\)', raw_name)
+    if m:
+        name   = m.group(1).strip()              # 닉네임: 미아옹
+        name2  = raw_name[:raw_name.index('(')].strip()  # 실명: 문성옥
+    else:
+        name = raw_name
+
     amount = int(
         iorder.get("pay_price") or
         iorder.get("total_price") or
         iorder.get("price") or 0
     )
-
-    # 결제 시각
     paid_at = (
         iorder.get("pay_date") or
         iorder.get("order_date") or
         datetime.now().isoformat()
     )
-
-    # 상품명
     prod_list = iorder.get("prod_list") or []
     item = ", ".join(p.get("prod_name", "") for p in prod_list) if prod_list else ""
 
-    return {"name": name, "amount": amount, "paid_at": paid_at, "item": item}
+    return {"name": name, "name2": name2, "amount": amount, "paid_at": paid_at, "item": item}
