@@ -1100,27 +1100,29 @@ async function loadSessionFilter() {
 async function loadDelivery() {
   const sid = document.getElementById('sessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
-  try {
-    const [confRes, pendRes, statusRes] = await Promise.all([
-      fetch(API + '/api/delivery' + qs),
-      fetch(API + '/api/orders/pending' + qs),
-      fetch(API + '/api/status')
-    ]);
-    const confirmed = await confRes.json();
-    const pending   = await pendRes.json();
-    const status    = await statusRes.json();
 
-    // 통계
+  // 입금확인 목록
+  try {
+    const r = await fetch(API + '/api/delivery' + qs);
+    const confirmed = await r.json();
+    renderDeliveryConfirmed(confirmed);
     document.getElementById('ds-total').textContent = confirmed.length;
     document.getElementById('ds-card').textContent = confirmed.filter(i => i.pay_type === 'card').length;
     document.getElementById('ds-transfer').textContent = confirmed.filter(i => i.pay_type === 'transfer' || i.pay_type === 'manual').length;
-    document.getElementById('ds-pending').textContent = status.pending || pending.length;
-
-    renderDeliveryConfirmed(confirmed);
-    renderDeliveryPending(pending);
   } catch(e) {
     document.getElementById('deliveryTbody').innerHTML =
-      '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">서버 연결 안됨</td></tr>';
+      '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">입금확인 데이터 로드 실패</td></tr>';
+  }
+
+  // 미확인 대기 목록
+  try {
+    const r2 = await fetch(API + '/api/orders/pending' + qs);
+    const pending = await r2.json();
+    renderDeliveryPending(pending);
+    document.getElementById('ds-pending').textContent = pending.length;
+  } catch(e) {
+    document.getElementById('pendingDeliveryTbody').innerHTML =
+      '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">미확인 대기 로드 실패</td></tr>';
   }
 }
 
