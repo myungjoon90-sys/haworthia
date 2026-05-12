@@ -452,15 +452,19 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     <div class="card">
       <div class="card-head">
         <h3>⏳ 입금 대기 중인 구매자</h3>
-        <div style="font-size:12px;color:var(--muted);">SMS 또는 카드결제 확인 시 자동으로 입금확인으로 이동됩니다</div>
+        <div class="btn-row">
+          <div style="font-size:12px;color:var(--muted);">SMS 또는 카드결제 확인 시 자동으로 입금확인으로 이동됩니다</div>
+          <button class="btn btn-primary" onclick="bulkAutoConfirm()" id="bulkAutoConfirmBtn">✅ 수동 입금확인</button>
+        </div>
       </div>
       <div class="tbl-wrap">
         <table>
           <thead><tr>
+            <th style="width:36px;"><input type="checkbox" id="autoCheckAll" onchange="toggleAutoAllCheck(this)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"></th>
             <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>라이브날짜</th>
           </tr></thead>
           <tbody id="pendingTbody">
-            <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
           </tbody>
         </table>
       </div>
@@ -1042,16 +1046,23 @@ function renderTimelineDays(row, days, logMap) {
 function renderPending(items) {
   const tbody = document.getElementById('pendingTbody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--green);padding:30px;">🎉 모두 입금확인 완료!</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--green);padding:30px;">🎉 모두 입금확인 완료!</td></tr>';
     return;
   }
+  const totalAmt = items.reduce((s, i) => s + Number(i.total_amount), 0);
   tbody.innerHTML = items.map(i => `
-    <tr>
+    <tr data-session="${i.session_id}" data-buyer="${i.buyer_name.replace(/"/g,'&quot;')}">
+      <td style="text-align:center;"><input type="checkbox" class="auto-pending-check" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"></td>
       <td><strong>${i.buyer_name}</strong></td>
       <td style="font-size:11px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
       <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.live_date||'-'}</td>
-    </tr>`).join('');
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td colspan="3" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--yellow);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td></td>
+    </tr>`;
 }
 
 function renderConfirmed(items) {
@@ -1060,7 +1071,8 @@ function renderConfirmed(items) {
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>';
     return;
   }
-  const payLabel = {card:'카드결제', transfer:'계좌이체', '':'-'};
+  const totalAmt = items.reduce((s, i) => s + Number(i.total_amount), 0);
+  const payLabel = {card:'카드결제', transfer:'계좌이체', manual:'수동확인', '':'-'};
   tbody.innerHTML = items.map(i => `
     <tr>
       <td><strong>${i.buyer_name}</strong></td>
@@ -1068,7 +1080,12 @@ function renderConfirmed(items) {
       <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
       <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
       <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.confirmed_at?i.confirmed_at.slice(0,16).replace('T',' '):'-'}</td>
-    </tr>`).join('');
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td colspan="2"></td>
+    </tr>`;
 }
 
 function switchInnerTab(tab) {
@@ -1169,6 +1186,7 @@ function renderDeliveryConfirmed(items) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문이 없습니다</td></tr>';
     return;
   }
+  const totalAmt = items.reduce((s, i) => s + Number(i.amount), 0);
   const payLabel = {card:'카드결제', transfer:'계좌이체', manual:'수동확인', '':'-'};
   const payClass = {card:'badge-card', transfer:'badge-transfer', manual:'badge-ok', '':'badge-ok'};
   tbody.innerHTML = items.map(i => `
@@ -1180,7 +1198,12 @@ function renderDeliveryConfirmed(items) {
       <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.confirmed_at ? i.confirmed_at.slice(0,16).replace('T',' ') : '-'}</td>
       <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.live_date || '-'}</td>
       <td><button class="btn btn-danger" style="font-size:11px;padding:3px 8px;" onclick="unconfirmOrder(${i.id})">취소</button></td>
-    </tr>`).join('');
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td colspan="4"></td>
+    </tr>`;
 }
 
 function renderDeliveryPending(items) {
@@ -1189,6 +1212,7 @@ function renderDeliveryPending(items) {
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--green);padding:30px;">🎉 미확인 주문 없음!</td></tr>';
     return;
   }
+  const totalAmt = items.reduce((s, i) => s + Number(i.total_amount), 0);
   tbody.innerHTML = items.map(i => `
     <tr data-session="${i.session_id}" data-buyer="${i.buyer_name.replace(/"/g,'&quot;')}">
       <td style="text-align:center;">
@@ -1199,11 +1223,48 @@ function renderDeliveryPending(items) {
       <td style="font-size:11px;color:var(--muted);max-width:250px;white-space:normal;">${i.items || '-'}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
       <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.live_date || '-'}</td>
-    </tr>`).join('');
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td></td>
+      <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--yellow);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td></td>
+    </tr>`;
 }
 
 function toggleAllCheck(masterCb) {
   document.querySelectorAll('.pending-check').forEach(cb => cb.checked = masterCb.checked);
+}
+
+function toggleAutoAllCheck(masterCb) {
+  document.querySelectorAll('.auto-pending-check').forEach(cb => cb.checked = masterCb.checked);
+}
+
+async function bulkAutoConfirm() {
+  const checked = document.querySelectorAll('.auto-pending-check:checked');
+  if (!checked.length) { toast('확인할 구매자를 먼저 체크하세요', 'err'); return; }
+  const targets = Array.from(checked).map(cb => {
+    const row = cb.closest('tr');
+    return { session_id: parseInt(row.dataset.session), buyer_name: row.dataset.buyer };
+  });
+  if (!confirm(`선택한 ${targets.length}명을 수동 입금확인 처리하시겠습니까?`)) return;
+  const btn = document.getElementById('bulkAutoConfirmBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 처리 중...';
+  let ok = 0;
+  for (const t of targets) {
+    try {
+      const r = await fetch(API + '/api/orders/confirm-by-buyer', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(t)
+      });
+      const d = await r.json();
+      if (d.ok) ok++;
+    } catch(e) {}
+  }
+  btn.disabled = false; btn.innerHTML = '✅ 수동 입금확인';
+  toast(`✅ ${ok}명 수동 입금확인 완료`, 'ok');
+  document.getElementById('autoCheckAll').checked = false;
+  await loadAutoPage();
+  switchInnerTab('confirmed');
 }
 
 async function bulkManualConfirm() {

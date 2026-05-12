@@ -707,10 +707,10 @@ if __name__ == '__main__':
     init_db()
 
     scheduler = BackgroundScheduler(timezone='Asia/Seoul')
-    scheduler.add_job(run_auto_check, 'cron', hour=11, minute=0,
-                      id='daily_check', replace_existing=True)
+    scheduler.add_job(run_auto_check, 'interval', minutes=30,
+                      id='interval_check', replace_existing=True)
     scheduler.start()
-    logger.info("⏰ 스케줄러 시작 (매일 오전 11:00 자동 확인)")
+    logger.info("⏰ 스케줄러 시작 (30분마다 자동 확인)")
 
     PORT = int(os.environ.get('PORT', 5000))
     logger.info(f"🌿 지양하월시아 서버 시작! 포트: {PORT}")
