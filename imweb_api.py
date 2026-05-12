@@ -61,16 +61,26 @@ def get_paid_orders(start_date, end_date):
             )
             data = resp.json()
 
+            # 디버그: 응답 코드와 첫 주문 구조 로깅
+            logger.info(f"아임웹 응답: code={data.get('code')} msg={data.get('msg','')[:50]}")
+
             if data.get("code") != 200:
-                logger.warning(f"아임웹 주문 조회 실패: {data}")
+                logger.warning(f"아임웹 주문 조회 실패: {str(data)[:300]}")
                 break
 
             items = data.get("data", {}).get("list", [])
+            logger.info(f"아임웹 주문 수: {len(items)}건 (page {page})")
+
+            # 첫 주문의 키 구조 로깅
+            if items and page == 1:
+                first = items[0]
+                logger.info(f"아임웹 주문 필드: {list(first.keys())[:20]}")
+                logger.info(f"아임웹 샘플: name={first.get('member_id') or first.get('orderer',{}).get('name') or first.get('member_name','')} pay_status={first.get('pay_status','')} pay_price={first.get('pay_price','')}")
+
             if not items:
                 break
 
             all_orders.extend(items)
-            logger.info(f"아임웹 주문 조회: {len(items)}건 (page {page})")
 
             if len(items) < 100:
                 break
