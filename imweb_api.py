@@ -84,8 +84,11 @@ def get_paid_orders(start_date, end_date):
             # 첫 주문의 키 구조 로깅
             if items and page == 1:
                 first = items[0]
+                payment = first.get('payment') or {}
+                orderer = first.get('orderer') or {}
                 logger.info(f"아임웹 주문 필드: {list(first.keys())[:20]}")
-                logger.info(f"아임웹 샘플: name={first.get('member_id') or first.get('orderer',{}).get('name') or first.get('member_name','')} pay_status={first.get('pay_status','')} pay_price={first.get('pay_price','')}")
+                logger.info(f"아임웹 payment 필드: {list(payment.keys())[:15]}")
+                logger.info(f"아임웹 샘플: name={orderer.get('name','')} price={payment.get('price','')} pay_price={payment.get('pay_price','')}")
 
             if not items:
                 break
@@ -103,39 +106,50 @@ def get_paid_orders(start_date, end_date):
     return all_orders
 
 def extract_order_info(iorder):
-    """아임웹 주문 데이터에서 핵심 정보 추출"""
+    """아임웹 V2 주문 데이터에서 핵심 정보 추출"""
     import re as _re
     orderer = iorder.get("orderer") or {}
+    payment = iorder.get("payment") or {}
 
-    # 여러 필드 시도 (아임웹은 버전마다 필드명이 다름)
+    # 주문자 이름: orderer.name 우선
     raw_name = (
-        iorder.get("member_id") or       # 아임웹 회원 아이디 (닉네임)
         orderer.get("name") or
+        iorder.get("member_id") or
         iorder.get("member_name") or
         iorder.get("orderer_name") or
         iorder.get("name") or ""
     ).strip()
 
-    # "문성옥(미아옹)" 형태 → 닉네임과 실명 분리
+    # "문성옥(미아옹)" → 닉네임/실명 분리
     name2 = None
     m = _re.search(r'\(([^)]+)\)', raw_name)
     if m:
-        name   = m.group(1).strip()              # 닉네임: 미아옹
-        name2  = raw_name[:raw_name.index('(')].strip()  # 실명: 문성옥
+        name  = m.group(1).strip()
+        name2 = raw_name[:raw_name.index('(')].strip()
     else:
         name = raw_name
 
+    # 결제 금액: payment 객체 안에서 추출
     amount = int(
+        payment.get("price") or
+        payment.get("pay_price") or
+        payment.get("total_price") or
+        payment.get("payment_price") or
         iorder.get("pay_price") or
-        iorder.get("total_price") or
-        iorder.get("price") or 0
+        iorder.get("total_price") or 0
     )
+
+    # 결제 시각
     paid_at = (
-        iorder.get("pay_date") or
-        iorder.get("order_date") or
+        payment.get("complete_time") or
+        payment.get("pay_time") or
+        iorder.get("complete_time") or
+        iorder.get("order_time") or
         datetime.now().isoformat()
     )
-    prod_list = iorder.get("prod_list") or []
+
+    # 상품명
+    prod_list = iorder.get("prod_list") or iorder.get("prod_items") or []
     item = ", ".join(p.get("prod_name", "") for p in prod_list) if prod_list else ""
 
     return {"name": name, "name2": name2, "amount": amount, "paid_at": paid_at, "item": item}
