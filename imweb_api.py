@@ -43,6 +43,16 @@ def get_paid_orders(start_date, end_date):
     if not token:
         return []
 
+    # YYYYMMDD → YYYY-MM-DD 형식 변환
+    def fmt(d):
+        if d and len(d) == 8:
+            return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+        return d
+
+    start_fmt = fmt(start_date) + " 00:00:00"
+    end_fmt   = fmt(end_date)   + " 23:59:59"
+    logger.info(f"아임웹 주문 조회 기간: {start_fmt} ~ {end_fmt}")
+
     all_orders = []
     page = 1
 
@@ -52,8 +62,8 @@ def get_paid_orders(start_date, end_date):
                 "https://api.imweb.me/v2/shop/orders",
                 headers={"access-token": token},
                 params={
-                    "order_date_from": start_date,
-                    "order_date_to": end_date,
+                    "order_date_from": start_fmt,
+                    "order_date_to":   end_fmt,
                     "limit": 100,
                     "page": page
                 },
