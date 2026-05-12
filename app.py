@@ -628,7 +628,13 @@ def run_auto_check():
                 imweb_orders = get_paid_orders(
                     session['live_date'].replace('-', ''), today_ym
                 )
+                logger.info(f"아임웹 주문 조회: {len(imweb_orders)}건")
                 for iorder in imweb_orders:
+                    # 디버그: 실제 데이터 구조 확인
+                    pay_status = iorder.get('pay_status') or iorder.get('payment_status', '')
+                    order_status = iorder.get('order_status', '')
+                    raw_name = (iorder.get('member_id') or iorder.get('orderer',{}).get('name') or iorder.get('member_name',''))
+                    logger.info(f"  주문: {raw_name} pay={pay_status} status={order_status} amt={iorder.get('pay_price',0)}")
                     info = extract_order_info(iorder)
                     if not info['amount']:
                         continue

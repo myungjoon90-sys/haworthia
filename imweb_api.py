@@ -54,7 +54,6 @@ def get_paid_orders(start_date, end_date):
                 params={
                     "order_date_from": start_date,
                     "order_date_to": end_date,
-                    "pay_status": "complete",
                     "limit": 100,
                     "page": page
                 },
