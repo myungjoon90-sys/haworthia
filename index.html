@@ -429,9 +429,12 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 
   <!-- 통계 -->
   <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
-    <div class="stat-card blue"><div class="stat-val" id="auto-total">-</div><div class="stat-lbl">전체 주문자</div></div>
-    <div class="stat-card yellow"><div class="stat-val" id="auto-pending">-</div><div class="stat-lbl">⏳ 미확인 대기</div></div>
-    <div class="stat-card green"><div class="stat-val" id="auto-confirmed">-</div><div class="stat-lbl">✅ 입금확인</div></div>
+    <div class="stat-card blue" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
+      <div class="stat-val" id="auto-total">-</div><div class="stat-lbl">전체 주문자</div></div>
+    <div class="stat-card yellow" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
+      <div class="stat-val" id="auto-pending">-</div><div class="stat-lbl">⏳ 미확인 대기 🔍</div></div>
+    <div class="stat-card green" onclick="switchInnerTab('confirmed')" style="cursor:pointer;" title="클릭: 입금확인 보기">
+      <div class="stat-val" id="auto-confirmed">-</div><div class="stat-lbl">✅ 입금확인 🔍</div></div>
   </div>
 
   <!-- 탭 -->
@@ -493,10 +496,14 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 
   <!-- 통계 -->
   <div class="stat-grid">
-    <div class="stat-card blue"><div class="stat-val" id="ds-total">-</div><div class="stat-lbl">전체 입금확인</div></div>
-    <div class="stat-card green"><div class="stat-val" id="ds-card">-</div><div class="stat-lbl">카드결제</div></div>
-    <div class="stat-card green"><div class="stat-val" id="ds-transfer">-</div><div class="stat-lbl">계좌이체</div></div>
-    <div class="stat-card yellow"><div class="stat-val" id="ds-pending">-</div><div class="stat-lbl">미확인 대기</div></div>
+    <div class="stat-card blue" onclick="filterDelivery('all')" style="cursor:pointer;" title="클릭: 전체 보기">
+      <div class="stat-val" id="ds-total">-</div><div class="stat-lbl">전체 입금확인</div></div>
+    <div class="stat-card green" onclick="filterDelivery('card')" style="cursor:pointer;" title="클릭: 카드결제만">
+      <div class="stat-val" id="ds-card">-</div><div class="stat-lbl">카드결제 🔍</div></div>
+    <div class="stat-card green" onclick="filterDelivery('transfer')" style="cursor:pointer;" title="클릭: 계좌이체만">
+      <div class="stat-val" id="ds-transfer">-</div><div class="stat-lbl">계좌이체 🔍</div></div>
+    <div class="stat-card yellow" onclick="filterDelivery('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
+      <div class="stat-val" id="ds-pending">-</div><div class="stat-lbl">미확인 대기 🔍</div></div>
   </div>
 
   <!-- 세션 필터 -->
@@ -1100,6 +1107,10 @@ async function loadSessionFilter() {
   } catch(e) {}
 }
 
+// 배송관리 전역 데이터
+let _deliveryConfirmed = [];
+let _deliveryPending = [];
+
 async function loadDelivery() {
   const sid = document.getElementById('sessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
@@ -1107,27 +1118,50 @@ async function loadDelivery() {
   // 입금확인 목록
   try {
     const r = await fetch(API + '/api/delivery' + qs);
-    const confirmed = await r.json();
-    renderDeliveryConfirmed(confirmed);
-    document.getElementById('ds-total').textContent = confirmed.length;
-    document.getElementById('ds-card').textContent = confirmed.filter(i => i.pay_type === 'card').length;
-    document.getElementById('ds-transfer').textContent = confirmed.filter(i => i.pay_type === 'transfer' || i.pay_type === 'manual').length;
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _deliveryConfirmed = await r.json();
+    renderDeliveryConfirmed(_deliveryConfirmed);
+    document.getElementById('ds-total').textContent = _deliveryConfirmed.length;
+    document.getElementById('ds-card').textContent = _deliveryConfirmed.filter(i => i.pay_type === 'card').length;
+    document.getElementById('ds-transfer').textContent = _deliveryConfirmed.filter(i => i.pay_type === 'transfer' || i.pay_type === 'manual').length;
   } catch(e) {
+    _deliveryConfirmed = [];
     document.getElementById('deliveryTbody').innerHTML =
-      '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">입금확인 데이터 로드 실패</td></tr>';
+      '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">입금확인된 주문 없음</td></tr>';
+    document.getElementById('ds-total').textContent = '0';
+    document.getElementById('ds-card').textContent = '0';
+    document.getElementById('ds-transfer').textContent = '0';
   }
 
   // 미확인 대기 목록
   try {
     const r2 = await fetch(API + '/api/orders/pending' + qs);
-    const pending = await r2.json();
-    renderDeliveryPending(pending);
-    document.getElementById('ds-pending').textContent = pending.length;
+    if (!r2.ok) throw new Error('HTTP ' + r2.status);
+    _deliveryPending = await r2.json();
+    renderDeliveryPending(_deliveryPending);
+    document.getElementById('ds-pending').textContent = _deliveryPending.length;
   } catch(e) {
+    _deliveryPending = [];
     document.getElementById('pendingDeliveryTbody').innerHTML =
-      '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">미확인 대기 로드 실패</td></tr>';
+      '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">미확인 대기 없음</td></tr>';
+    document.getElementById('ds-pending').textContent = '0';
   }
 }
+
+// 배송관리 통계카드 클릭 필터
+function filterDelivery(type) {
+  // 탭 전환
+  if (type === 'pending') {
+    switchDeliveryTab('pending');
+    return;
+  }
+  switchDeliveryTab('confirmed');
+  let filtered = _deliveryConfirmed;
+  if (type === 'card')     filtered = _deliveryConfirmed.filter(i => i.pay_type === 'card');
+  if (type === 'transfer') filtered = _deliveryConfirmed.filter(i => i.pay_type === 'transfer' || i.pay_type === 'manual');
+  renderDeliveryConfirmed(filtered);
+}
+
 
 function renderDeliveryConfirmed(items) {
   const tbody = document.getElementById('deliveryTbody');
