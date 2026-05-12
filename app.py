@@ -277,8 +277,48 @@ def get_confirmed_orders():
     return jsonify([dict(i) for i in items])
 
 
-@app.route('/api/delivery', methods=['GET'])
-def get_delivery():
+@app.route('/api/orders/confirm-by-buyer', methods=['POST'])
+def confirm_by_buyer():
+    """구매자 이름으로 해당 세션의 모든 주문 수동 확인"""
+    data = request.get_json(force=True) or {}
+    session_id = data.get('session_id')
+    buyer_name = data.get('buyer_name')
+    if not session_id or not buyer_name:
+        return jsonify({'error': '필수 파라미터 없음'}), 400
+    conn = get_conn()
+    conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='manual'
+                   WHERE session_id=? AND buyer_name=? AND status='pending',
+                 (datetime.now().isoformat(), session_id, buyer_name))
+    conn.commit()
+    conn.close()
+    logger.info(f"수동확인: {buyer_name} (session {session_id})")
+    return jsonify({'ok': True})
+
+
+
+def manual_confirm_order(order_id):
+    """수동으로 입금확인 처리"""
+    conn = get_conn()
+    conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='manual'
+                   WHERE id=?''', (datetime.now().isoformat(), order_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"수동 입금확인: order_id={order_id}")
+    return jsonify({'ok': True})
+
+
+@app.route('/api/orders/<int:order_id>/unconfirm', methods=['POST'])
+def manual_unconfirm_order(order_id):
+    """입금확인 취소 (대기로 되돌리기)"""
+    conn = get_conn()
+    conn.execute('''UPDATE orders SET status='pending', confirmed_at=NULL, pay_type=NULL
+                   WHERE id=?''', (order_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+
     session_id = request.args.get('session_id')
     conn = get_conn()
     sql = '''SELECT o.id, o.buyer_name, o.item, o.amount, o.pay_type,
@@ -492,34 +532,65 @@ def amount_matches(paid, ordered):
 
 
 def match_sms_to_order(parsed, recv_time):
-    """SMS 입금 → 대기중 주문 매칭"""
+    """SMS 입금 → 대기중 주문 매칭 (이름+금액 or 금액만)"""
+    name   = parsed.get('name')
+    amount = parsed['amount']
+    today  = datetime.now().strftime('%Y-%m-%d')
+    now    = datetime.now().isoformat()
+
     conn = get_conn()
     try:
-        names = resolve_names(conn, parsed['name'])
-        today = datetime.now().strftime('%Y-%m-%d')
+        if name:
+            # 이름 + 금액 매칭 (KB국민은행 / 이름있는 농협)
+            names = resolve_names(conn, name)
+            for sname in names:
+                order = conn.execute('''
+                    SELECT o.* FROM orders o
+                    JOIN live_sessions ls ON o.session_id = ls.id
+                    WHERE o.status = 'pending'
+                      AND (o.buyer_name = ? OR o.buyer_name LIKE ?)
+                      AND ? BETWEEN ls.check_start AND ls.check_end
+                    LIMIT 1
+                ''', (sname, f'%{sname}%', today)).fetchone()
 
-        for name in names:
-            order = conn.execute('''
+                if order and amount_matches(amount, order['amount']):
+                    conn.execute('''UPDATE orders
+                                   SET status='confirmed', confirmed_at=?,
+                                       pay_type='transfer', bank_date=?
+                                   WHERE id=?''',
+                                 (now, recv_time, order['id']))
+                    conn.execute('''UPDATE sms_payments SET matched=1
+                                   WHERE parsed_name=? AND parsed_amount=? AND matched=0''',
+                                 (name, amount))
+                    conn.commit()
+                    logger.info(f"SMS 매칭: {order['buyer_name']} {order['amount']:,}원")
+                    return
+        else:
+            # 이름 없음 (농협) → 금액만으로 매칭
+            orders = conn.execute('''
                 SELECT o.* FROM orders o
                 JOIN live_sessions ls ON o.session_id = ls.id
                 WHERE o.status = 'pending'
-                  AND (o.buyer_name = ? OR o.buyer_name LIKE ?)
                   AND ? BETWEEN ls.check_start AND ls.check_end
-                LIMIT 1
-            ''', (name, f'%{name}%', today)).fetchone()
+            ''', (today,)).fetchall()
 
-            if order and amount_matches(parsed['amount'], order['amount']):
+            matched = [dict(o) for o in orders if amount_matches(amount, dict(o)['amount'])]
+            if len(matched) == 1:
+                order = matched[0]
                 conn.execute('''UPDATE orders
-                                SET status='confirmed', confirmed_at=?, pay_type='transfer', bank_date=?
-                                WHERE id=?''',
-                             (datetime.now().isoformat(), recv_time, order['id']))
-                # SMS matched 표시
+                               SET status='confirmed', confirmed_at=?,
+                                   pay_type='transfer', bank_date=?
+                               WHERE id=?''',
+                             (now, recv_time, order['id']))
                 conn.execute('''UPDATE sms_payments SET matched=1
-                                WHERE parsed_name=? AND parsed_amount=? AND matched=0''',
-                             (parsed['name'], parsed['amount']))
+                               WHERE parsed_amount=? AND parsed_name IS NULL AND matched=0''',
+                             (amount,))
                 conn.commit()
-                logger.info(f"✅ SMS 매칭 성공: {order['buyer_name']} {order['amount']:,}원")
-                return
+                logger.info(f"SMS 금액매칭(농협): {order['buyer_name']} {order['amount']:,}원")
+            elif len(matched) > 1:
+                logger.info(f"SMS 농협 금액중복 {len(matched)}명 - 수동확인필요: {amount:,}원")
+    except Exception as e:
+        logger.error(f"SMS 매칭 오류: {e}")
     finally:
         conn.close()
 
