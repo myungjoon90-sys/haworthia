@@ -26,6 +26,45 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
+
+# ══════════════════════════════════════════════════════════════════
+#  ★ 요청 추적 미들웨어 (디버깅용)
+#  모든 들어오는 요청을 무조건 기록 → Automate/외부에서 보낸 요청이
+#  서버에 닿기만 하면 Railway 로그에 한 줄이 무조건 찍힘.
+# ══════════════════════════════════════════════════════════════════
+@app.before_request
+def _log_every_request():
+    try:
+        # 정적 파일이나 favicon 등 시끄러운 요청은 제외
+        if request.path in ('/favicon.ico',):
+            return
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        ctype = request.content_type or ''
+        clen = request.content_length or 0
+        # 짧은 본문이면 내용도 같이 (SMS POST 디버깅 핵심)
+        body_preview = ''
+        if request.method == 'POST' and clen < 2000:
+            try:
+                raw = request.get_data(cache=True, as_text=True) or ''
+                body_preview = ' body=' + raw.replace('\n', '\\n')[:300]
+            except Exception:
+                body_preview = ' body=<read-failed>'
+        logger.info(
+            f"➡️  {request.method} {request.path} from={client_ip} "
+            f"ct={ctype} len={clen}{body_preview}"
+        )
+    except Exception as e:
+        logger.error(f"요청 로깅 오류: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  헬스체크 (외부 모니터링/연결 테스트용)
+# ══════════════════════════════════════════════════════════════════
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'ok': True, 'service': 'jiyang-haworthia', 'time': datetime.now().isoformat()})
+
+
 # ══════════════════════════════════════════════════════════════════
 #  메인 페이지 서빙
 # ══════════════════════════════════════════════════════════════════
@@ -39,15 +78,37 @@ def index():
 
 
 # ══════════════════════════════════════════════════════════════════
-#  SMS Webhook  ← MacroDroid가 여기로 POST 전송
+#  SMS Webhook  ← Automate/MacroDroid가 여기로 POST 전송
+#  여러 경로 모두 같은 핸들러로: /sms, /api/sms, /webhook/sms
 # ══════════════════════════════════════════════════════════════════
-@app.route('/sms', methods=['POST'])
+@app.route('/sms',         methods=['POST'])
+@app.route('/api/sms',     methods=['POST'])
+@app.route('/webhook/sms', methods=['POST'])
 def receive_sms():
     try:
-        data = request.get_json(force=True) or {}
-        body      = data.get('body', '')
-        sender    = data.get('sender', '')
-        recv_time = data.get('time', datetime.now().isoformat())
+        # JSON 우선, 실패 시 form/text도 시도 (Automate 설정 차이 대응)
+        data = request.get_json(silent=True)
+        if not data:
+            # JSON 헤더 없이 form-encoded로 보내는 경우
+            if request.form:
+                data = request.form.to_dict()
+            else:
+                # raw text를 body로 취급
+                raw = request.get_data(as_text=True) or ''
+                if raw.strip():
+                    data = {'body': raw}
+                else:
+                    data = {}
+
+        body      = (data.get('body')   or data.get('message') or data.get('text')   or '').strip()
+        sender    = (data.get('sender') or data.get('from')    or data.get('source') or '').strip()
+        recv_time = data.get('time') or datetime.now().isoformat()
+
+        if not body:
+            logger.warning(f"⚠️  SMS 본문 없음 (data keys: {list(data.keys()) if data else 'none'})")
+            return jsonify({'ok': False, 'error': 'body 필드가 비어있음'}), 400
+
+        logger.info(f"📨 SMS 수신: sender='{sender}' body='{body[:80]}'")
 
         parsed = parse_sms(body)
 
@@ -69,16 +130,16 @@ def receive_sms():
         if parsed:
             try:
                 match_sms_to_order(parsed, recv_time)
-                logger.info(f"SMS 입금: {parsed['bank']} {parsed['name']} {parsed['amount']:,}원")
+                logger.info(f"✅ SMS 파싱 성공: {parsed['bank']} {parsed.get('name','?')} {parsed['amount']:,}원")
             except Exception as e:
                 logger.error(f"SMS 매칭 오류: {e}")
         else:
-            logger.info(f"SMS 수신 (파싱불가): {body[:40]}")
+            logger.info(f"ℹ️  SMS 파싱 불가 (입금 문자 아님 가능): {body[:60]}")
 
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'received': True, 'parsed': bool(parsed)})
 
     except Exception as e:
-        logger.error(f"SMS 수신 처리 오류: {e}")
+        logger.exception(f"SMS 수신 처리 예외: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 200
 
 
@@ -257,26 +318,6 @@ def get_confirmed_orders():
     return jsonify([dict(r) for r in rows])
 
 
-
-    session_id = request.args.get('session_id')
-    conn = get_conn()
-
-    sql = '''SELECT o.id, o.buyer_name, o.item, o.amount, o.pay_type,
-                    o.confirmed_at, o.bank_date, ls.live_date, ls.filename
-             FROM orders o
-             JOIN live_sessions ls ON o.session_id = ls.id
-             WHERE o.status = 'confirmed' '''
-    params = []
-    if session_id:
-        sql += ' AND o.session_id = ?'
-        params.append(session_id)
-    sql += ' ORDER BY o.confirmed_at DESC'
-
-    items = conn.execute(sql, params).fetchall()
-    conn.close()
-    return jsonify([dict(i) for i in items])
-
-
 @app.route('/api/orders/confirm-by-buyer', methods=['POST'])
 def confirm_by_buyer():
     """구매자 이름으로 해당 세션의 모든 주문 수동 확인"""
@@ -316,24 +357,6 @@ def manual_unconfirm_order(order_id):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
-
-
-
-    session_id = request.args.get('session_id')
-    conn = get_conn()
-    sql = '''SELECT o.id, o.buyer_name, o.item, o.amount, o.pay_type,
-                    o.confirmed_at, o.bank_date, ls.live_date, ls.filename
-             FROM orders o
-             JOIN live_sessions ls ON o.session_id = ls.id
-             WHERE o.status = 'confirmed' '''
-    params = []
-    if session_id:
-        sql += ' AND o.session_id = ?'
-        params.append(session_id)
-    sql += ' ORDER BY o.confirmed_at DESC'
-    items = conn.execute(sql, params).fetchall()
-    conn.close()
-    return jsonify([dict(i) for i in items])
 
 
 @app.route('/api/delivery/excel', methods=['GET'])
@@ -421,7 +444,10 @@ def manual_check():
     return jsonify({'ok': True, 'message': '입금확인 완료'})
 
 
-
+# ══════════════════════════════════════════════════════════════════
+#  7일 자동확인 진행현황 조회  ⭐ (이전 버전에서 데코레이터 누락이 있었음)
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/check/logs', methods=['GET'])
 def get_check_logs():
     """세션별 7일 자동확인 실행 로그"""
     session_id = request.args.get('session_id')
@@ -465,11 +491,6 @@ def get_check_logs():
 
     conn.close()
     return jsonify({'session': session, 'days': days})
-
-
-
-    run_auto_check()
-    return jsonify({'ok': True, 'message': '입금확인 완료'})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -630,14 +651,11 @@ def run_auto_check():
                 )
                 logger.info(f"아임웹 주문 조회: {len(imweb_orders)}건")
                 for iorder in imweb_orders:
-                    # 디버그: 실제 데이터 구조 확인
-                    pay_status = iorder.get('pay_status') or iorder.get('payment_status', '')
-                    order_status = iorder.get('order_status', '')
-                    raw_name = (iorder.get('member_id') or iorder.get('orderer',{}).get('name') or iorder.get('member_name',''))
-                    logger.info(f"  주문: {raw_name} pay={pay_status} status={order_status} amt={iorder.get('pay_price',0)}")
                     info = extract_order_info(iorder)
                     if not info['amount']:
+                        logger.info(f"  ⏭️  스킵 (금액 0): name={info.get('name','')} name2={info.get('name2','')}")
                         continue
+
                     # 닉네임 + 실명 + 매핑 모두 시도
                     search_names = []
                     if info['name']:
@@ -646,22 +664,32 @@ def run_auto_check():
                         search_names += resolve_names(conn, info['name2'])
                     search_names = list(dict.fromkeys(search_names))  # 중복 제거
 
+                    logger.info(f"  🔍 아임웹 주문: '{info.get('name','')}'({info.get('name2','')}) {info['amount']:,}원 → 검색이름:{search_names}")
+
                     matched = False
                     for name in search_names:
-                        order = conn.execute('''
+                        candidates = conn.execute('''
                             SELECT * FROM orders
                             WHERE session_id=? AND status='pending'
                               AND (buyer_name=? OR buyer_name LIKE ?)
-                            LIMIT 1
-                        ''', (sid, name, f'%{name}%')).fetchone()
-                        if order and amount_matches(info['amount'], order['amount']):
-                            conn.execute('''UPDATE orders
-                                           SET status='confirmed', confirmed_at=?, pay_type='card'
-                                           WHERE id=?''', (info['paid_at'], order['id']))
-                            imweb_confirmed += 1
-                            logger.info(f"카드결제 확인: {order['buyer_name']} {order['amount']:,}원")
-                            matched = True
+                        ''', (sid, name, f'%{name}%')).fetchall()
+                        if not candidates:
+                            continue
+                        for order in candidates:
+                            if amount_matches(info['amount'], order['amount']):
+                                conn.execute('''UPDATE orders
+                                               SET status='confirmed', confirmed_at=?, pay_type='card'
+                                               WHERE id=?''', (info['paid_at'], order['id']))
+                                imweb_confirmed += 1
+                                logger.info(f"  ✅ 카드결제 확인: {order['buyer_name']} {order['amount']:,}원 (입금:{info['amount']:,}원)")
+                                matched = True
+                                break
+                            else:
+                                logger.info(f"  ❌ 금액불일치: DB={order['buyer_name']} {order['amount']:,}원 vs 입금 {info['amount']:,}원")
+                        if matched:
                             break
+                    if not matched:
+                        logger.info(f"  ⚠️  매칭 실패: '{info.get('name','')}' {info['amount']:,}원 - 대기 주문 중 일치하는 게 없음")
             except Exception as e:
                 imweb_status = 'error'
                 error_msg = f"아임웹:{str(e)}"
