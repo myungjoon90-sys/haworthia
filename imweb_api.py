@@ -10,10 +10,23 @@ IMWEB_SECRET  = "2e98914f0564d9eb1cdaa6"
 _token = None
 _token_expires = None
 
-def get_access_token():
+
+def invalidate_token():
+    """캐시된 토큰을 강제로 무효화 (아임웹이 토큰 거부 시 호출됨)"""
+    global _token, _token_expires
+    _token = None
+    _token_expires = None
+    logger.info("🔄 아임웹 토큰 캐시 무효화 → 다음 요청 시 재발급")
+
+
+def get_access_token(force_refresh=False):
+    """
+    아임웹 액세스 토큰 발급/조회
+    force_refresh=True 면 캐시 무시하고 무조건 새로 받음
+    """
     global _token, _token_expires
     now = datetime.now()
-    if _token and _token_expires and now < _token_expires:
+    if not force_refresh and _token and _token_expires and now < _token_expires:
         return _token
     try:
         resp = requests.get(
@@ -24,8 +37,9 @@ def get_access_token():
         data = resp.json()
         if data.get("code") == 200:
             _token = data["access_token"]
-            _token_expires = now + timedelta(hours=1)
-            logger.info("✅ 아임웹 토큰 발급 성공")
+            # 안전마진: 1시간 → 50분으로 단축 (아임웹이 조기 만료시키는 경우 대비)
+            _token_expires = now + timedelta(minutes=50)
+            logger.info("✅ 아임웹 토큰 발급 성공 (50분간 캐시)")
             return _token
         else:
             logger.error(f"아임웹 토큰 발급 실패: {data}")
@@ -34,15 +48,23 @@ def get_access_token():
         logger.error(f"아임웹 연결 오류: {e}")
         return None
 
+
+def _is_token_error(data):
+    """응답이 토큰 관련 에러인지 판단"""
+    if not data:
+        return False
+    code = data.get("code")
+    msg = (data.get("msg") or "").lower()
+    # code = -2 ('Error Token'), 401 (Unauthorized), 또는 msg에 'token' 포함
+    return code == -2 or code == 401 or "token" in msg
+
+
 def get_paid_orders(start_date, end_date):
     """
     start_date, end_date: 'YYYYMMDD' 형식
     결제완료 주문 목록 반환
+    ★ 토큰 만료/오류 시 자동으로 새 토큰 받아 재시도 (사이클당 1회)
     """
-    token = get_access_token()
-    if not token:
-        return []
-
     # YYYYMMDD → YYYY-MM-DD 형식 변환
     def fmt(d):
         if d and len(d) == 8:
@@ -55,8 +77,14 @@ def get_paid_orders(start_date, end_date):
 
     all_orders = []
     page = 1
+    retried = False  # 한 호출당 토큰 재시도 1회 제한
 
     while True:
+        token = get_access_token()
+        if not token:
+            logger.warning("아임웹 토큰 없음 → 조회 중단")
+            break
+
         try:
             resp = requests.get(
                 "https://api.imweb.me/v2/shop/orders",
@@ -71,8 +99,14 @@ def get_paid_orders(start_date, end_date):
             )
             data = resp.json()
 
-            # 디버그: 응답 코드와 첫 주문 구조 로깅
             logger.info(f"아임웹 응답: code={data.get('code')} msg={data.get('msg','')[:50]}")
+
+            # ★★ 토큰 에러 자동 복구 ★★
+            if _is_token_error(data) and not retried:
+                logger.warning(f"⚠️  토큰 에러 감지(code={data.get('code')}) → 토큰 재발급 후 재시도")
+                invalidate_token()
+                retried = True
+                continue  # 같은 page로 다시 시도
 
             if data.get("code") != 200:
                 logger.warning(f"아임웹 주문 조회 실패: {str(data)[:300]}")
@@ -81,7 +115,7 @@ def get_paid_orders(start_date, end_date):
             items = data.get("data", {}).get("list", [])
             logger.info(f"아임웹 주문 수: {len(items)}건 (page {page})")
 
-            # 첫 주문의 키 구조 로깅
+            # 첫 페이지 첫 주문의 키 구조 로깅 (디버그용)
             if items and page == 1:
                 first = items[0]
                 payment = first.get('payment') or {}
@@ -104,6 +138,7 @@ def get_paid_orders(start_date, end_date):
             break
 
     return all_orders
+
 
 def extract_order_info(iorder):
     """아임웹 V2 주문 데이터에서 핵심 정보 추출"""
