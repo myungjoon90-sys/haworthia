@@ -428,11 +428,13 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   </div>
 
   <!-- 통계 -->
-  <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+  <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
     <div class="stat-card blue" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
       <div class="stat-val" id="auto-total">-</div><div class="stat-lbl">전체 주문자</div></div>
     <div class="stat-card yellow" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
       <div class="stat-val" id="auto-pending">-</div><div class="stat-lbl">⏳ 미확인 대기 🔍</div></div>
+    <div class="stat-card yellow" onclick="switchInnerTab('candidates')" style="cursor:pointer;background:rgba(255,165,0,0.08);" title="클릭: 의심가는 후보 보기">
+      <div class="stat-val" id="auto-candidates">-</div><div class="stat-lbl">🤔 의심가는 후보 🔍</div></div>
     <div class="stat-card green" onclick="switchInnerTab('confirmed')" style="cursor:pointer;" title="클릭: 입금확인 보기">
       <div class="stat-val" id="auto-confirmed">-</div><div class="stat-lbl">✅ 입금확인 🔍</div></div>
   </div>
@@ -441,6 +443,9 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;">
     <div class="inner-tab active" id="tab-pending" onclick="switchInnerTab('pending')" style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid var(--yellow);color:var(--yellow);">
       ⏳ 미확인 대기 <span id="pending-count-badge" class="nav-badge show" style="background:var(--yellow);"></span>
+    </div>
+    <div class="inner-tab" id="tab-candidates" onclick="switchInnerTab('candidates')" style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+      🤔 의심가는 후보 <span id="candidates-count-badge" class="nav-badge" style="background:#f59e0b;"></span>
     </div>
     <div class="inner-tab" id="tab-confirmed" onclick="switchInnerTab('confirmed')" style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
       ✅ 입금확인
@@ -465,6 +470,29 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
           </tr></thead>
           <tbody id="pendingTbody">
             <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 의심가는 후보 리스트 -->
+  <div id="inner-candidates" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>🤔 의심가는 후보 (이름이 100% 일치하지 않거나 금액만 일치)</h3>
+        <div style="font-size:12px;color:var(--muted);">
+          [✅ 확인] 버튼을 누르면 해당 주문이 입금확인 처리됩니다. [❌ 거절] 은 후보만 닫습니다.
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>출처</th><th>받은 이름</th><th>입금금액</th><th style="text-align:center;">→</th>
+            <th>추정 구매자</th><th>주문금액</th><th>근거</th><th style="width:160px;">확인</th>
+          </tr></thead>
+          <tbody id="candidatesTbody">
+            <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">의심후보 없음</td></tr>
           </tbody>
         </table>
       </div>
@@ -952,21 +980,28 @@ async function loadAutoPage() {
   const sid = document.getElementById('autoSessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
   try {
-    const [pendingRes, confirmedRes, sessionsRes] = await Promise.all([
+    const [pendingRes, confirmedRes, sessionsRes, candidatesRes] = await Promise.all([
       fetch(API + '/api/orders/pending' + qs),
       fetch(API + '/api/orders/confirmed' + qs),
-      fetch(API + '/api/sessions')
+      fetch(API + '/api/sessions'),
+      fetch(API + '/api/candidates' + qs)
     ]);
-    const pending   = await pendingRes.json();
-    const confirmed = await confirmedRes.json();
-    const sessions  = await sessionsRes.json();
+    const pending    = await pendingRes.json();
+    const confirmed  = await confirmedRes.json();
+    const sessions   = await sessionsRes.json();
+    const candidates = await candidatesRes.json();
 
     renderPending(pending);
     renderConfirmed(confirmed);
+    renderCandidates(candidates);
     document.getElementById('auto-total').textContent = pending.length + confirmed.length;
     document.getElementById('auto-pending').textContent = pending.length;
     document.getElementById('auto-confirmed').textContent = confirmed.length;
+    document.getElementById('auto-candidates').textContent = candidates.length;
     document.getElementById('pending-count-badge').textContent = pending.length;
+    const candBadge = document.getElementById('candidates-count-badge');
+    if (candidates.length > 0) { candBadge.textContent = candidates.length; candBadge.classList.add('show'); }
+    else { candBadge.classList.remove('show'); candBadge.textContent = ''; }
     if (pending.length > 0) {
       document.getElementById('badge-auto').textContent = pending.length;
       document.getElementById('badge-auto').classList.add('show');
@@ -1089,11 +1124,103 @@ function renderConfirmed(items) {
 }
 
 function switchInnerTab(tab) {
-  const isPending = tab === 'pending';
-  document.getElementById('inner-pending').style.display = isPending ? 'block' : 'none';
-  document.getElementById('inner-confirmed').style.display = isPending ? 'none' : 'block';
-  document.getElementById('tab-pending').style.cssText = `padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid ${isPending?'var(--yellow)':'transparent'};color:${isPending?'var(--yellow)':'var(--muted)'};`;
-  document.getElementById('tab-confirmed').style.cssText = `padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid ${!isPending?'var(--green)':'transparent'};color:${!isPending?'var(--green)':'var(--muted)'};`;
+  const states = {
+    pending:   { id: 'inner-pending',    tabId: 'tab-pending',    color: 'var(--yellow)' },
+    candidates:{ id: 'inner-candidates', tabId: 'tab-candidates', color: '#f59e0b' },
+    confirmed: { id: 'inner-confirmed',  tabId: 'tab-confirmed',  color: 'var(--green)' },
+  };
+  Object.entries(states).forEach(([key, s]) => {
+    const active = (key === tab);
+    document.getElementById(s.id).style.display = active ? 'block' : 'none';
+    document.getElementById(s.tabId).style.cssText =
+      `padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;` +
+      `border-bottom:2px solid ${active ? s.color : 'transparent'};` +
+      `color:${active ? s.color : 'var(--muted)'};`;
+  });
+  // 의심후보 탭으로 들어올 때 다시 로드
+  if (tab === 'candidates') loadCandidates();
+}
+
+async function loadCandidates() {
+  const sid = document.getElementById('autoSessionFilter').value;
+  const qs  = sid ? '?session_id=' + sid : '';
+  try {
+    const r = await fetch(API + '/api/candidates' + qs);
+    const list = await r.json();
+    renderCandidates(list);
+    document.getElementById('auto-candidates').textContent = list.length;
+    const badge = document.getElementById('candidates-count-badge');
+    if (list.length > 0) { badge.textContent = list.length; badge.classList.add('show'); }
+    else { badge.classList.remove('show'); badge.textContent = ''; }
+  } catch (e) {
+    document.getElementById('candidatesTbody').innerHTML =
+      '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px;">서버 연결 안됨</td></tr>';
+  }
+}
+
+function renderCandidates(list) {
+  const tb = document.getElementById('candidatesTbody');
+  if (!list || list.length === 0) {
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">의심후보 없음</td></tr>';
+    return;
+  }
+  const confBadge = (c) => {
+    const map = {
+      high:   ['#16a34a', '높음'],
+      medium: ['#f59e0b', '중간'],
+      low:    ['#ef4444', '낮음'],
+    };
+    const [bg, lbl] = map[c] || ['#999', c || '-'];
+    return `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;background:${bg};color:#fff;margin-right:4px;">${lbl}</span>`;
+  };
+  const srcBadge = (s) => {
+    if (s === 'imweb') return '<span style="padding:2px 6px;border-radius:4px;font-size:11px;background:#3b82f6;color:#fff;">아임웹</span>';
+    if (s === 'sms')   return '<span style="padding:2px 6px;border-radius:4px;font-size:11px;background:#8b5cf6;color:#fff;">SMS</span>';
+    return s || '-';
+  };
+  const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString() + '원');
+  tb.innerHTML = list.map(c => {
+    const paid  = c.paid_name || '-';
+    const paid2 = c.paid_name2 ? ` <span style="color:var(--muted);font-size:11px;">(${c.paid_name2})</span>` : '';
+    const buyer = c.candidate_buyer_name || '<span style="color:var(--muted);">미정</span>';
+    const approveDisabled = c.candidate_order_id ? '' : 'disabled title="추정 주문이 없어 승인 불가"';
+    return `
+      <tr>
+        <td>${srcBadge(c.source)}</td>
+        <td><strong>${paid}</strong>${paid2}</td>
+        <td style="font-family:'DM Mono',monospace;">${fmt(c.amount)}</td>
+        <td style="text-align:center;color:var(--muted);">→</td>
+        <td>${buyer}</td>
+        <td style="font-family:'DM Mono',monospace;">${fmt(c.candidate_amount)}</td>
+        <td style="font-size:12px;color:var(--muted);">${confBadge(c.confidence)}${c.reason || ''}</td>
+        <td>
+          <button class="btn btn-primary" style="padding:4px 10px;font-size:12px;" onclick="approveCandidate(${c.id})" ${approveDisabled}>✅ 확인</button>
+          <button class="btn" style="padding:4px 10px;font-size:12px;background:#444;color:#fff;" onclick="rejectCandidate(${c.id})">❌ 거절</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+async function approveCandidate(id) {
+  if (!confirm('이 후보를 입금확인으로 처리하시겠습니까?')) return;
+  try {
+    const r = await fetch(API + '/api/candidates/' + id + '/approve',
+                          {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    if (d.ok) {
+      toast(`✅ ${d.buyer_name} 입금확인 처리 완료`, 'ok');
+      loadAutoPage();
+    } else { toast('오류: ' + (d.error || '실패'), 'err'); }
+  } catch (e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function rejectCandidate(id) {
+  if (!confirm('이 후보를 거절(폐기)하시겠습니까?')) return;
+  try {
+    const r = await fetch(API + '/api/candidates/' + id + '/reject', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) { toast('거절됨', 'ok'); loadCandidates(); loadStatus(); }
+  } catch (e) { toast('서버 연결 실패', 'err'); }
 }
 
 async function runCheckNow() {

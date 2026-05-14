@@ -1,0 +1,6 @@
+flask
+flask-cors
+apscheduler
+openpyxl
+requests
+gunicorn
