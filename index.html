@@ -481,15 +481,13 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     <div class="card">
       <div class="card-head">
         <h3>🤔 의심가는 후보 (이름이 100% 일치하지 않거나 금액만 일치)</h3>
-        <div style="font-size:12px;color:var(--muted);">
-          [✅ 확인] 버튼을 누르면 해당 주문이 입금확인 처리됩니다. [❌ 거절] 은 후보만 닫습니다.
-        </div>
+        <div style="font-size:12px;color:var(--muted);">[✅ 확인] 누르면 입금확인 처리. [❌ 거절]은 후보만 닫음.</div>
       </div>
       <div class="tbl-wrap">
         <table>
           <thead><tr>
             <th>출처</th><th>받은 이름</th><th>입금금액</th><th style="text-align:center;">→</th>
-            <th>추정 구매자</th><th>주문금액</th><th>근거</th><th style="width:160px;">확인</th>
+            <th>추정 구매자</th><th>주문 합계</th><th>근거</th><th style="width:160px;">확인</th>
           </tr></thead>
           <tbody id="candidatesTbody">
             <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">의심후보 없음</td></tr>
@@ -933,14 +931,12 @@ async function loadStatus() {
 // ══════════════════════════════════════════════════════════════════
 document.getElementById('liveDateInput').valueAsDate = new Date();
 
-// 파일명에서 라이브 방송 날짜(YYYY-MM-DD or YYYYMMDD) 자동 추출
 function extractLiveDateFromFilename(name) {
   if (!name) return null;
   let m = name.match(/(20\d{2})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   m = name.match(/(20\d{2})(\d{2})(\d{2})/);
   if (m) {
-    // 유효 날짜 확인
     const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
     if (!isNaN(d.getTime())) return `${m[1]}-${m[2]}-${m[3]}`;
   }
@@ -954,8 +950,7 @@ function handleAutoUpload(files) {
   zone.querySelector('.upload-label').textContent = f.name;
   zone.querySelector('.upload-hint').textContent = `${(f.size/1024).toFixed(1)} KB`;
   zone.classList.add('has-file');
-
-  // ⭐ 파일명에서 라이브 방송 날짜 자동 추출 → 입력칸 덮어쓰기
+  // 파일명에서 라이브 방송 날짜 자동 추출 → 입력칸 덮어쓰기
   const detected = extractLiveDateFromFilename(f.name);
   if (detected) {
     document.getElementById('liveDateInput').value = detected;
@@ -1001,7 +996,7 @@ async function loadAutoPage() {
   const sid = document.getElementById('autoSessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
   try {
-    const [pendingRes, confirmedRes, sessionsRes, candidatesRes] = await Promise.all([
+    const [pendingRes, confirmedRes, sessionsRes, candRes] = await Promise.all([
       fetch(API + '/api/orders/pending' + qs),
       fetch(API + '/api/orders/confirmed' + qs),
       fetch(API + '/api/sessions'),
@@ -1010,7 +1005,7 @@ async function loadAutoPage() {
     const pending    = await pendingRes.json();
     const confirmed  = await confirmedRes.json();
     const sessions   = await sessionsRes.json();
-    const candidates = await candidatesRes.json();
+    const candidates = await candRes.json();
 
     renderPending(pending);
     renderConfirmed(confirmed);
@@ -1146,9 +1141,9 @@ function renderConfirmed(items) {
 
 function switchInnerTab(tab) {
   const states = {
-    pending:   { id: 'inner-pending',    tabId: 'tab-pending',    color: 'var(--yellow)' },
-    candidates:{ id: 'inner-candidates', tabId: 'tab-candidates', color: '#f59e0b' },
-    confirmed: { id: 'inner-confirmed',  tabId: 'tab-confirmed',  color: 'var(--green)' },
+    pending:    { id: 'inner-pending',    tabId: 'tab-pending',    color: 'var(--yellow)' },
+    candidates: { id: 'inner-candidates', tabId: 'tab-candidates', color: '#f59e0b' },
+    confirmed:  { id: 'inner-confirmed',  tabId: 'tab-confirmed',  color: 'var(--green)' },
   };
   Object.entries(states).forEach(([key, s]) => {
     const active = (key === tab);
@@ -1158,7 +1153,6 @@ function switchInnerTab(tab) {
       `border-bottom:2px solid ${active ? s.color : 'transparent'};` +
       `color:${active ? s.color : 'var(--muted)'};`;
   });
-  // 의심후보 탭으로 들어올 때 다시 로드
   if (tab === 'candidates') loadCandidates();
 }
 
@@ -1186,11 +1180,7 @@ function renderCandidates(list) {
     return;
   }
   const confBadge = (c) => {
-    const map = {
-      high:   ['#16a34a', '높음'],
-      medium: ['#f59e0b', '중간'],
-      low:    ['#ef4444', '낮음'],
-    };
+    const map = { high: ['#16a34a','높음'], medium: ['#f59e0b','중간'], low: ['#ef4444','낮음'] };
     const [bg, lbl] = map[c] || ['#999', c || '-'];
     return `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;background:${bg};color:#fff;margin-right:4px;">${lbl}</span>`;
   };
@@ -1204,7 +1194,7 @@ function renderCandidates(list) {
     const paid  = c.paid_name || '-';
     const paid2 = c.paid_name2 ? ` <span style="color:var(--muted);font-size:11px;">(${c.paid_name2})</span>` : '';
     const buyer = c.candidate_buyer_name || '<span style="color:var(--muted);">미정</span>';
-    const approveDisabled = c.candidate_order_id ? '' : 'disabled title="추정 주문이 없어 승인 불가"';
+    const approveDisabled = c.candidate_buyer_name ? '' : 'disabled title="추정 주문이 없어 승인 불가"';
     return `
       <tr>
         <td>${srcBadge(c.source)}</td>
@@ -1228,15 +1218,13 @@ async function approveCandidate(id) {
     const r = await fetch(API + '/api/candidates/' + id + '/approve',
                           {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
     const d = await r.json();
-    if (d.ok) {
-      toast(`✅ ${d.buyer_name} 입금확인 처리 완료`, 'ok');
-      loadAutoPage();
-    } else { toast('오류: ' + (d.error || '실패'), 'err'); }
+    if (d.ok) { toast(`✅ ${d.buyer_name} 입금확인 처리 완료`, 'ok'); loadAutoPage(); }
+    else { toast('오류: ' + (d.error || '실패'), 'err'); }
   } catch (e) { toast('서버 연결 실패', 'err'); }
 }
 
 async function rejectCandidate(id) {
-  if (!confirm('이 후보를 거절(폐기)하시겠습니까?')) return;
+  if (!confirm('이 후보를 거절하시겠습니까?')) return;
   try {
     const r = await fetch(API + '/api/candidates/' + id + '/reject', {method:'POST'});
     const d = await r.json();

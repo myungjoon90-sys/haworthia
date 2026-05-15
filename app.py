@@ -7,8 +7,8 @@ from io import BytesIO
 from datetime import datetime, timedelta
 import logging
 import os
-import re
 import socket
+import re
 
 from database import init_db, get_conn
 from imweb_api import get_paid_orders, extract_order_info
@@ -113,7 +113,6 @@ def receive_sms():
 
         parsed = parse_sms(body)
         sms_id = None
-
         try:
             conn = get_conn()
             cur = conn.execute(
@@ -137,7 +136,7 @@ def receive_sms():
             except Exception as e:
                 logger.error(f"SMS 매칭 오류: {e}")
         else:
-            logger.info(f"ℹ️  SMS 파싱 불가 (입금 문자 아님 가능): {body[:60]}")
+            logger.info(f"ℹ️  SMS 파싱 불가: {body[:60]}")
 
         return jsonify({'ok': True, 'received': True, 'parsed': bool(parsed), 'sms_id': sms_id})
 
@@ -150,20 +149,13 @@ def receive_sms():
 #  거래명세표 업로드
 # ══════════════════════════════════════════════════════════════════
 def extract_live_date_from_filename(filename):
-    """
-    파일명에서 라이브방송 날짜(YYYY-MM-DD) 추출.
-    예) "2026-05-01지양하월시아 다부해(거래명세서).xlsx" → "2026-05-01"
-        "20260501_xxx.xlsx"                            → "2026-05-01"
-    """
-    if not filename:
-        return None
+    """파일명에서 라이브방송 날짜(YYYY-MM-DD) 추출"""
+    if not filename: return None
     m = re.search(r'(20\d{2})-(\d{2})-(\d{2})', filename)
-    if m:
-        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    if m: return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
     m = re.search(r'(20\d{2})(\d{2})(\d{2})', filename)
     if m:
         try:
-            # 유효한 날짜인지 검증
             datetime.strptime(f"{m.group(1)}-{m.group(2)}-{m.group(3)}", '%Y-%m-%d')
             return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
         except ValueError:
@@ -178,10 +170,7 @@ def upload_session():
 
     file = request.files['file']
 
-    # ── live_date 결정 우선순위 ───────────────────────────────────
-    # 1) 폼에서 사용자가 명시한 live_date
-    # 2) 파일명에서 자동 추출 (2026-05-01 또는 20260501 패턴)
-    # 3) 오늘 날짜 (마지막 보루)
+    # live_date 결정: 1) 폼 입력값  2) 파일명 추출  3) 오늘 (최후)
     live_date_form = (request.form.get('live_date') or '').strip()
     if live_date_form:
         live_date = live_date_form
@@ -207,9 +196,9 @@ def upload_session():
     except ValueError:
         return jsonify({'error': f'라이브 날짜 형식 오류: {live_date}'}), 400
 
-    check_start = live_dt.strftime('%Y-%m-%d')  # 당일 포함
+    check_start = live_dt.strftime('%Y-%m-%d')
     check_end   = (live_dt + timedelta(days=7)).strftime('%Y-%m-%d')
-    logger.info(f"📅 live_date 결정: {live_date} (source={live_date_source}), 체크기간 {check_start}~{check_end}")
+    logger.info(f"📅 live_date 결정: {live_date} (source={live_date_source})")
 
     conn = get_conn()
     c = conn.execute(
@@ -482,178 +471,12 @@ def delete_mapping(nickname):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  의심후보 조회 / 승인 / 거절
-# ══════════════════════════════════════════════════════════════════
-@app.route('/api/candidates', methods=['GET'])
-def list_candidates():
-    """의심후보 목록 (open 상태만 기본 노출)"""
-    session_id = request.args.get('session_id')
-    status     = request.args.get('status', 'open')
-    conn = get_conn()
-    sql = '''SELECT mc.*, ls.live_date, ls.filename
-             FROM match_candidates mc
-             LEFT JOIN live_sessions ls ON mc.session_id = ls.id
-             WHERE mc.status = ?'''
-    params = [status]
-    if session_id:
-        sql += ' AND mc.session_id = ?'
-        params.append(session_id)
-    sql += ''' ORDER BY
-                  CASE mc.confidence
-                       WHEN 'high' THEN 0
-                       WHEN 'medium' THEN 1
-                       WHEN 'low' THEN 2
-                       ELSE 3 END,
-                  mc.created_at DESC'''
-    rows = conn.execute(sql, params).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route('/api/candidates/<int:cand_id>/approve', methods=['POST'])
-def approve_candidate(cand_id):
-    """
-    의심후보 승인 → 같은 buyer_name + session의 모든 pending 주문을 한꺼번에 confirmed 처리.
-    body로 buyer_name을 넘기면 그 이름으로 덮어쓰기 가능 (잘못 추정된 후보를 다른 사람에게 붙일 때).
-    """
-    data = request.get_json(silent=True) or {}
-    override_buyer = (data.get('buyer_name') or '').strip()
-
-    conn = get_conn()
-    try:
-        cand = conn.execute('SELECT * FROM match_candidates WHERE id=?', (cand_id,)).fetchone()
-        if not cand:
-            return jsonify({'error': '후보 없음'}), 404
-        cand = dict(cand)
-
-        target_buyer = override_buyer or cand.get('candidate_buyer_name')
-        target_session = cand.get('session_id')
-        if not target_buyer:
-            return jsonify({'error': '연결할 구매자 이름을 지정해주세요 (buyer_name)'}), 400
-
-        # 해당 구매자의 모든 pending 행 한꺼번에 처리
-        pending = conn.execute(
-            "SELECT id, amount FROM orders WHERE session_id=? AND buyer_name=? AND status='pending'",
-            (target_session, target_buyer)
-        ).fetchall()
-        if not pending:
-            return jsonify({'error': f"세션{target_session}에 '{target_buyer}' 의 pending 주문이 없음"}), 404
-
-        pay_type = 'card' if cand['source'] == 'imweb' else 'transfer'
-        now = datetime.now().isoformat()
-        for row in pending:
-            conn.execute('''UPDATE orders
-                           SET status='confirmed', confirmed_at=?, pay_type=?, bank_date=?
-                           WHERE id=?''',
-                         (now, pay_type, cand.get('paid_at'), row['id']))
-
-        conn.execute('''UPDATE match_candidates
-                       SET status='approved', decided_at=?, candidate_buyer_name=?
-                       WHERE id=?''',
-                     (now, target_buyer, cand_id))
-        # SMS 매칭됨 표시
-        if cand['source'] == 'sms' and cand.get('source_ref'):
-            try:
-                conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (int(cand['source_ref']),))
-            except Exception:
-                pass
-        conn.commit()
-        total = sum(r['amount'] for r in pending)
-        logger.info(f"  👍 의심후보 승인: cand={cand_id} → buyer='{target_buyer}' ({len(pending)}건 합계 {total:,}원)")
-        return jsonify({'ok': True, 'buyer_name': target_buyer, 'rows_confirmed': len(pending), 'total_amount': total})
-    finally:
-        conn.close()
-
-
-@app.route('/api/candidates/<int:cand_id>/reject', methods=['POST'])
-def reject_candidate(cand_id):
-    """의심후보 거절 → 해당 후보 닫기 (입금/주문은 그대로)"""
-    conn = get_conn()
-    try:
-        conn.execute('''UPDATE match_candidates
-                       SET status='rejected', decided_at=?
-                       WHERE id=?''', (datetime.now().isoformat(), cand_id))
-        conn.commit()
-        logger.info(f"  👎 의심후보 거절: cand={cand_id}")
-        return jsonify({'ok': True})
-    finally:
-        conn.close()
-
-
-# ══════════════════════════════════════════════════════════════════
 #  수동 확인 실행 버튼
 # ══════════════════════════════════════════════════════════════════
 @app.route('/api/check/run', methods=['POST'])
 def manual_check():
     run_auto_check()
     return jsonify({'ok': True, 'message': '입금확인 완료'})
-
-
-# ══════════════════════════════════════════════════════════════════
-#  ★ SMS 진단용 엔드포인트 (Automate가 안 닿을 때 폰 브라우저로 직접 테스트)
-# ══════════════════════════════════════════════════════════════════
-@app.route('/api/sms/echo', methods=['GET', 'POST'])
-def sms_echo():
-    """
-    Automate/MacroDroid가 보낸 요청을 그대로 되돌려준다.
-    폰 브라우저에서 https://<배포주소>/api/sms/echo 만 열어봐도 200 OK 와
-    method/path/headers/body 가 보임 → 서버에 닿느냐 아니냐를 1초 안에 판별.
-    """
-    info = {
-        'ok': True,
-        'received_at': datetime.now().isoformat(),
-        'method': request.method,
-        'path': request.path,
-        'remote_addr': request.headers.get('X-Forwarded-For', request.remote_addr),
-        'content_type': request.content_type,
-        'content_length': request.content_length,
-        'headers': {k: v for k, v in request.headers.items()},
-        'args': request.args.to_dict(flat=False),
-        'form': request.form.to_dict(flat=False),
-        'json': request.get_json(silent=True),
-        'body_preview': (request.get_data(as_text=True) or '')[:500],
-    }
-    logger.info(f"🩺 /api/sms/echo {request.method} from={info['remote_addr']} ct={info['content_type']} len={info['content_length']}")
-    return jsonify(info)
-
-
-@app.route('/api/sms/simulate', methods=['GET', 'POST'])
-def sms_simulate():
-    """
-    내가 SMS 텍스트만 폼/쿼리로 던지면 실제 receive_sms 로직을 그대로 실행.
-    Automate 없이 GET 한 번으로 매칭 전체 흐름을 검증할 수 있음.
-    예: /api/sms/simulate?body=[Web발신]%0A[KB]05/14%2010:15%0A971372**874%0A강혜경%0A입금%0A274,000%0A잔액1,033,072
-    """
-    body = (request.args.get('body') or request.form.get('body')
-            or (request.get_json(silent=True) or {}).get('body') or '').strip()
-    if not body:
-        return jsonify({'ok': False, 'error': 'body 파라미터가 필요합니다',
-                        'usage': 'POST 또는 GET /api/sms/simulate?body=<SMS 본문>'}), 400
-
-    parsed   = parse_sms(body)
-    recv_iso = datetime.now().isoformat()
-
-    sms_id = None
-    try:
-        conn = get_conn()
-        cur = conn.execute(
-            '''INSERT INTO sms_payments (sender, body, parsed_name, parsed_amount, received_at)
-               VALUES (?, ?, ?, ?, ?)''',
-            ('SIMULATE', body,
-             parsed['name']   if parsed else None,
-             parsed['amount'] if parsed else None,
-             recv_iso)
-        )
-        sms_id = cur.lastrowid
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error(f"sms_simulate 저장 오류: {e}")
-
-    if parsed:
-        match_sms_to_order(parsed, recv_iso, sms_id=sms_id)
-
-    return jsonify({'ok': True, 'parsed': parsed, 'sms_id': sms_id})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -739,170 +562,239 @@ def get_status():
     total     = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
     confirmed = conn.execute("SELECT COUNT(*) FROM orders WHERE status='confirmed'").fetchone()[0]
     pending   = conn.execute("SELECT COUNT(*) FROM orders WHERE status='pending'").fetchone()[0]
-    sms_today = conn.execute(
-        "SELECT COUNT(*) FROM sms_payments WHERE DATE(received_at)=DATE('now')"
-    ).fetchone()[0]
-    candidates_open = conn.execute(
-        "SELECT COUNT(*) FROM match_candidates WHERE status='open'"
-    ).fetchone()[0]
+    sms_today = conn.execute("SELECT COUNT(*) FROM sms_payments WHERE DATE(received_at)=DATE('now')").fetchone()[0]
+    candidates_open = conn.execute("SELECT COUNT(*) FROM match_candidates WHERE status='open'").fetchone()[0]
     conn.close()
-    return jsonify({
-        'total': total, 'confirmed': confirmed, 'pending': pending,
-        'sms_today': sms_today,
-        'candidates_open': candidates_open,
-    })
+    return jsonify({'total': total, 'confirmed': confirmed, 'pending': pending,
+                    'sms_today': sms_today, 'candidates_open': candidates_open})
 
 
 # ══════════════════════════════════════════════════════════════════
-#  핵심 매칭 로직
+#  의심후보 조회 / 승인 / 거절
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/candidates', methods=['GET'])
+def list_candidates():
+    session_id = request.args.get('session_id')
+    status     = request.args.get('status', 'open')
+    conn = get_conn()
+    sql = """SELECT mc.*, ls.live_date, ls.filename
+             FROM match_candidates mc
+             LEFT JOIN live_sessions ls ON mc.session_id=ls.id
+             WHERE mc.status=?"""
+    params = [status]
+    if session_id:
+        sql += ' AND mc.session_id=?'
+        params.append(session_id)
+    sql += """ ORDER BY CASE mc.confidence WHEN 'high' THEN 0 WHEN 'medium' THEN 1
+                          WHEN 'low' THEN 2 ELSE 3 END, mc.created_at DESC"""
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/candidates/<int:cand_id>/approve', methods=['POST'])
+def approve_candidate(cand_id):
+    """승인 — 같은 buyer_name + session의 모든 pending 행을 일괄 confirmed."""
+    data = request.get_json(silent=True) or {}
+    override_buyer = (data.get('buyer_name') or '').strip()
+    conn = get_conn()
+    try:
+        cand = conn.execute('SELECT * FROM match_candidates WHERE id=?', (cand_id,)).fetchone()
+        if not cand: return jsonify({'error': '후보 없음'}), 404
+        cand = dict(cand)
+        target_buyer = override_buyer or cand.get('candidate_buyer_name')
+        target_session = cand.get('session_id')
+        if not target_buyer:
+            return jsonify({'error': '구매자 이름 필요'}), 400
+        pending = conn.execute(
+            "SELECT id, amount FROM orders WHERE session_id=? AND buyer_name=? AND status='pending'",
+            (target_session, target_buyer)).fetchall()
+        if not pending:
+            return jsonify({'error': f"세션{target_session} '{target_buyer}' pending 없음"}), 404
+        pay_type = 'card' if cand['source'] == 'imweb' else 'transfer'
+        now = datetime.now().isoformat()
+        for row in pending:
+            conn.execute("UPDATE orders SET status='confirmed', confirmed_at=?, pay_type=?, bank_date=? WHERE id=?",
+                         (now, pay_type, cand.get('paid_at'), row['id']))
+        conn.execute("UPDATE match_candidates SET status='approved', decided_at=?, candidate_buyer_name=? WHERE id=?",
+                     (now, target_buyer, cand_id))
+        if cand['source'] == 'sms' and cand.get('source_ref'):
+            try: conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (int(cand['source_ref']),))
+            except: pass
+        conn.commit()
+        total = sum(r['amount'] for r in pending)
+        logger.info(f"  👍 후보 승인: cand={cand_id} → '{target_buyer}' ({len(pending)}건 합{total:,}원)")
+        return jsonify({'ok': True, 'buyer_name': target_buyer, 'rows_confirmed': len(pending), 'total_amount': total})
+    finally:
+        conn.close()
+
+
+@app.route('/api/candidates/<int:cand_id>/reject', methods=['POST'])
+def reject_candidate(cand_id):
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE match_candidates SET status='rejected', decided_at=? WHERE id=?",
+                     (datetime.now().isoformat(), cand_id))
+        conn.commit()
+        return jsonify({'ok': True})
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ★ SMS 진단 엔드포인트 (Automate 디버깅)
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/sms/echo', methods=['GET', 'POST'])
+def sms_echo():
+    info = {
+        'ok': True, 'received_at': datetime.now().isoformat(),
+        'method': request.method, 'path': request.path,
+        'remote_addr': request.headers.get('X-Forwarded-For', request.remote_addr),
+        'content_type': request.content_type,
+        'content_length': request.content_length,
+        'headers': {k: v for k, v in request.headers.items()},
+        'args': request.args.to_dict(flat=False),
+        'form': request.form.to_dict(flat=False),
+        'json': request.get_json(silent=True),
+        'body_preview': (request.get_data(as_text=True) or '')[:500],
+    }
+    logger.info(f"🩺 /api/sms/echo {request.method}")
+    return jsonify(info)
+
+
+@app.route('/api/sms/simulate', methods=['GET', 'POST'])
+def sms_simulate():
+    body = (request.args.get('body') or request.form.get('body')
+            or (request.get_json(silent=True) or {}).get('body') or '').strip()
+    if not body:
+        return jsonify({'ok': False, 'error': 'body 필요'}), 400
+    parsed = parse_sms(body)
+    recv_iso = datetime.now().isoformat()
+    sms_id = None
+    try:
+        conn = get_conn()
+        cur = conn.execute("INSERT INTO sms_payments (sender, body, parsed_name, parsed_amount, received_at) VALUES (?,?,?,?,?)",
+                            ('SIMULATE', body,
+                             parsed['name']   if parsed else None,
+                             parsed['amount'] if parsed else None,
+                             recv_iso))
+        sms_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"simulate 저장: {e}")
+    if parsed:
+        match_sms_to_order(parsed, recv_iso, sms_id=sms_id)
+    return jsonify({'ok': True, 'parsed': parsed, 'sms_id': sms_id})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  핵심 매칭 로직 (구매자별 SUM 합산 매칭 + 의심후보 시스템)
 # ══════════════════════════════════════════════════════════════════
 def _norm(s):
     """이름 정규화: 공백/특수문자 제거, 소문자화"""
-    if not s:
-        return ''
+    if not s: return ''
     return re.sub(r'[\s\(\)\[\]\.\,\-_]+', '', str(s)).lower()
 
 
 def resolve_names(conn, name):
-    """닉네임 → 실명 매핑 포함한 검색 이름 목록 (역방향도 포함)"""
+    """닉네임 → 실명 매핑 (양방향)"""
     names = [name]
-    if not name:
-        return names
-    # 닉네임 → 실명
+    if not name: return names
     row = conn.execute('SELECT realname FROM nick_mappings WHERE nickname=?', (name,)).fetchone()
-    if row and row['realname']:
-        names.append(row['realname'])
-    # 실명 → 닉네임 (역방향, SMS 이름이 실명일 때 거래명세표 닉네임 찾기)
+    if row and row['realname']: names.append(row['realname'])
     row = conn.execute('SELECT nickname FROM nick_mappings WHERE realname=?', (name,)).fetchone()
-    if row and row['nickname']:
-        names.append(row['nickname'])
+    if row and row['nickname']: names.append(row['nickname'])
     return list(dict.fromkeys(filter(None, names)))
 
 
 def amount_matches(paid, ordered):
-    """금액 일치 여부: 정확 일치 or 배송비 4000원 포함 or 100원 이하 오차"""
     diff = abs(paid - ordered)
     return diff == 0 or diff == 4000 or diff <= 100
 
 
 def find_buyer_match(conn, session_id, search_names, amount):
     """
-    퍼지 매칭으로 거래명세표 구매자 후보를 등급별로 찾는다.
-    ⭐ 거래명세표의 한 구매자가 여러 행에 걸쳐 있을 수 있으므로
-       buyer_name별 SUM(amount) 기준으로 매칭한다. (1행 1매칭 X)
-    Returns:
-        (buyer_dict_or_None, confidence, reason)
-        buyer_dict: {'buyer_name': str, 'total_amount': int, 'order_ids': [int,...]}
-        confidence: 'high'    → 이름 정확일치 + 합산금액 일치 → 자동확인
-                    'medium'  → 정규화/부분일치 + 합산금액 일치, 또는 합산금액만 일치
-                    'low'     → 이름 유사인데 합산금액 다름
-                    None      → 후보 없음
+    퍼지 매칭 - 구매자별 SUM(amount)를 기준으로.
+    Returns: ({'buyer_name','total_amount','order_ids'}, confidence, reason)
     """
-    if not search_names:
-        return (None, None, '검색이름 없음')
-
-    # 구매자별로 합산 (pending만)
+    if not search_names: return (None, None, '검색이름 없음')
     grouped_rows = conn.execute('''
-        SELECT buyer_name,
-               SUM(amount) AS total_amount,
-               COUNT(*)    AS row_count,
+        SELECT buyer_name, SUM(amount) AS total_amount, COUNT(*) AS row_count,
                GROUP_CONCAT(id) AS order_ids
-        FROM orders
-        WHERE session_id=? AND status='pending'
-        GROUP BY buyer_name
+        FROM orders WHERE session_id=? AND status='pending' GROUP BY buyer_name
     ''', (session_id,)).fetchall()
-    if not grouped_rows:
-        return (None, None, '대기 주문 없음')
+    if not grouped_rows: return (None, None, '대기 주문 없음')
+    grouped = [{
+        'buyer_name': r['buyer_name'],
+        'total_amount': int(r['total_amount'] or 0),
+        'order_ids': [int(x) for x in (r['order_ids'] or '').split(',') if x],
+    } for r in grouped_rows]
 
-    def to_dict(r):
-        return {
-            'buyer_name': r['buyer_name'],
-            'total_amount': int(r['total_amount'] or 0),
-            'order_ids': [int(x) for x in (r['order_ids'] or '').split(',') if x],
-        }
-
-    grouped = [to_dict(r) for r in grouped_rows]
-
-    # 1) 정확 일치 + 합산 금액 일치 (high → 자동확인)
+    # 1) 이름 정확일치 + 합산금액 일치 → high
     for name in search_names:
         for g in grouped:
             if g['buyer_name'] == name and amount_matches(amount, g['total_amount']):
-                return (g, 'high', f"이름 정확일치({name}) + 합산금액일치")
+                return (g, 'high', f"이름정확({name})+합산일치")
 
-    # 2) 정규화/부분포함 + 합산 금액 일치 (medium)
+    # 2) 정규화/부분 + 합산금액 일치 → medium
     norm_searches = {n: _norm(n) for n in search_names if n}
     for name, nname in norm_searches.items():
-        if not nname:
-            continue
+        if not nname: continue
         for g in grouped:
-            buyer = g['buyer_name'] or ''
-            nbuyer = _norm(buyer)
-            if not nbuyer:
-                continue
+            buyer = g['buyer_name'] or ''; nbuyer = _norm(buyer)
+            if not nbuyer: continue
             if nname == nbuyer and amount_matches(amount, g['total_amount']):
-                return (g, 'medium', f"정규화 일치({name}↔{buyer}) + 합산금액일치")
+                return (g, 'medium', f"정규화일치({name}↔{buyer})+합산일치")
             if (nname in nbuyer or nbuyer in nname) and amount_matches(amount, g['total_amount']):
-                return (g, 'medium', f"부분포함({name}↔{buyer}) + 합산금액일치")
+                return (g, 'medium', f"부분포함({name}↔{buyer})+합산일치")
 
-    # 3) 합산금액만 일치 (1명일 때만 medium)
+    # 3) 합산금액만 일치 (1명) → medium
     amount_only = [g for g in grouped if amount_matches(amount, g['total_amount'])]
     if len(amount_only) == 1:
         g = amount_only[0]
-        return (g, 'medium', f"합산금액만 일치(이름다름: {search_names[0]}↔{g['buyer_name']})")
+        return (g, 'medium', f"합산금액만 일치({g['buyer_name']})")
     elif len(amount_only) > 1:
-        # 여러 명 합산금액이 같음 → 가장 첫 번째를 low로 등록(사용자가 선택)
-        g = amount_only[0]
-        return (g, 'low', f"합산금액 같은 사람 {len(amount_only)}명 — 사용자 선택 필요 (첫번째: {g['buyer_name']})")
+        return (amount_only[0], 'low', f"합산금액 같은 {len(amount_only)}명")
 
-    # 4) 이름은 비슷한데 합산금액 다름 (low)
+    # 4) 이름 유사 + 합산금액 다름 → low
     for name, nname in norm_searches.items():
-        if not nname:
-            continue
+        if not nname: continue
         for g in grouped:
-            buyer = g['buyer_name'] or ''
-            nbuyer = _norm(buyer)
+            buyer = g['buyer_name'] or ''; nbuyer = _norm(buyer)
             if nname == nbuyer or (nname and nbuyer and (nname in nbuyer or nbuyer in nname)):
-                return (g, 'low', f"이름유사({name}↔{buyer}) 합산금액다름({amount:,}↔{g['total_amount']:,})")
+                return (g, 'low', f"이름유사({name}↔{buyer}) 합산다름({amount:,}↔{g['total_amount']:,})")
 
-    return (None, None, f"후보 없음 (이름 {search_names}, 금액 {amount:,}원)")
+    return (None, None, f"후보없음 ({search_names}, {amount:,}원)")
 
 
 def save_candidate(conn, session_id, source, source_ref,
                    paid_name, paid_name2, amount, paid_at,
                    buyer_dict, confidence, reason):
-    """
-    의심후보로 저장 (UNIQUE 충돌은 무시).
-    buyer_dict: find_buyer_match가 반환한 {'buyer_name', 'total_amount', 'order_ids'} 또는 None.
-    candidate_order_id에는 첫 번째 order_id를 저장 (UNIQUE 키 용도) — 승인은 buyer_name으로 일괄.
-    """
     if buyer_dict:
         buyer_name = buyer_dict.get('buyer_name')
         cand_amt   = buyer_dict.get('total_amount')
-        order_ids  = buyer_dict.get('order_ids') or []
-        first_id   = order_ids[0] if order_ids else None
+        first_id   = (buyer_dict.get('order_ids') or [None])[0]
     else:
-        buyer_name = None
-        cand_amt   = None
-        first_id   = None
+        buyer_name = None; cand_amt = None; first_id = None
     try:
-        conn.execute('''
-            INSERT INTO match_candidates
+        conn.execute('''INSERT INTO match_candidates
               (session_id, source, source_ref, paid_name, paid_name2,
                amount, paid_at, candidate_order_id, candidate_buyer_name,
                candidate_amount, confidence, reason, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-        ''', (session_id, source, str(source_ref) if source_ref else '',
-              paid_name, paid_name2, amount, paid_at,
-              first_id, buyer_name, cand_amt,
-              confidence, reason, datetime.now().isoformat()))
-        logger.info(f"  🤔 의심후보 등록: src={source} '{paid_name}' {amount:,}원 → 추정 '{buyer_name}' (합산:{cand_amt}, {confidence}: {reason})")
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',?)''',
+              (session_id, source, str(source_ref) if source_ref else '',
+               paid_name, paid_name2, amount, paid_at,
+               first_id, buyer_name, cand_amt, confidence, reason,
+               datetime.now().isoformat()))
+        logger.info(f"  🤔 의심후보: src={source} '{paid_name}' {amount:,}원 → '{buyer_name}' 합계{cand_amt} ({confidence}: {reason})")
     except Exception as e:
         if 'UNIQUE' not in str(e):
-            logger.warning(f"의심후보 저장 실패: {e}")
+            logger.warning(f"후보 저장 실패: {e}")
 
 
 def match_sms_to_order(parsed, recv_time, sms_id=None):
-    """SMS 입금 → 대기중 주문 매칭. high면 자동확인, 그 외는 의심후보 등록."""
+    """SMS 입금 → SUM 합산 기준 매칭. high면 자동확인, 그 외는 의심후보 등록."""
     name   = parsed.get('name')
     amount = parsed['amount']
     today  = datetime.now().strftime('%Y-%m-%d')
@@ -910,19 +802,14 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
 
     conn = get_conn()
     try:
+        # 가장 최근 세션 (활성/비활성 무관) — pending 1건이라도 있으면 매칭 시도
         sessions = conn.execute('''
             SELECT * FROM live_sessions
-            WHERE ? BETWEEN check_start AND check_end
-            ORDER BY created_at DESC
-        ''', (today,)).fetchall()
+            WHERE EXISTS (SELECT 1 FROM orders o WHERE o.session_id=live_sessions.id AND o.status='pending')
+            ORDER BY live_date DESC
+        ''').fetchall()
         if not sessions:
-            recent = conn.execute(
-                'SELECT * FROM live_sessions ORDER BY created_at DESC LIMIT 1'
-            ).fetchone()
-            sessions = [recent] if recent else []
-
-        if not sessions:
-            logger.info(f"SMS: 활성 세션 없음 → 매칭 보류 ({name or '-'} {amount:,}원)")
+            logger.info(f"SMS: pending 보유 세션 없음 → 보류 ({name or '-'} {amount:,}원)")
             return
 
         search_names = resolve_names(conn, name) if name else []
@@ -933,7 +820,6 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
                 conn, sid, search_names or [name or ''], amount
             )
             if confidence == 'high':
-                # 해당 구매자의 모든 pending 행을 한꺼번에 confirmed 처리
                 for oid in buyer['order_ids']:
                     conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?,
                                            pay_type='transfer', bank_date=? WHERE id=?''',
@@ -945,11 +831,10 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
                                    WHERE parsed_amount=? AND COALESCE(parsed_name,'')=COALESCE(?,'') AND matched=0''',
                                  (amount, name))
                 conn.commit()
-                logger.info(f"  ✅ SMS 자동매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건, {reason})")
+                logger.info(f"  ✅ SMS 자동매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건)")
                 return
             elif confidence in ('medium', 'low'):
-                save_candidate(conn, sid, 'sms', sms_id,
-                               name, None, amount, recv_time,
+                save_candidate(conn, sid, 'sms', sms_id, name, None, amount, recv_time,
                                buyer, confidence, reason)
                 conn.commit()
                 return
@@ -960,8 +845,9 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
         conn.close()
 
 
+
 def run_auto_check():
-    """매일 30분마다 + 수동: 아임웹 카드결제 + 미매칭 SMS 재대조"""
+    """매일 30분마다 + 수동: 아임웹 카드결제 + 미매칭 SMS 재대조 (SUM 합산 + 의심후보)"""
     logger.info("자동 입금확인 시작...")
     today    = datetime.now().strftime('%Y-%m-%d')
     today_ym = today.replace('-', '')
@@ -969,130 +855,91 @@ def run_auto_check():
 
     conn = get_conn()
     try:
-        # ⭐ pending 주문이 1건이라도 있는 모든 세션을 처리한다.
-        # 라이브 날짜가 지나도 아임웹/SMS는 늦게 들어올 수 있으므로
-        # check_end 만료 조건은 의도적으로 빼버린다. 미아옹 5/12 주문이
-        # 5/1 라이브 세션의 check_end(5/8) 이후에도 들어오기 때문.
+        # ⭐ pending 주문이 1건이라도 있는 모든 세션 처리 (check_end 만료 무관)
         sessions = conn.execute('''
             SELECT * FROM live_sessions
-            WHERE EXISTS (
-                SELECT 1 FROM orders o
-                WHERE o.session_id = live_sessions.id AND o.status = 'pending'
-            )
+            WHERE EXISTS (SELECT 1 FROM orders o WHERE o.session_id=live_sessions.id AND o.status='pending')
             ORDER BY live_date DESC
         ''').fetchall()
-        logger.info(f"처리할 세션: {len(sessions)}건 (pending 주문 보유)")
+        logger.info(f"처리할 세션: {len(sessions)}건 (pending 보유)")
 
         for session in sessions:
             session = dict(session)
             sid = session['id']
             logger.info(f"세션 확인: {session['filename']}")
 
-            imweb_status = 'success'
-            sms_status = 'success'
-            imweb_confirmed = 0
-            sms_confirmed = 0
-            error_msg = None
+            imweb_status = 'success'; sms_status = 'success'
+            imweb_confirmed = 0; sms_confirmed = 0; error_msg = None
 
-            # 1. 아임웹 카드결제 확인
+            # 1) 아임웹 카드결제 — 조회기간 라이브 ~ +30일 (오늘로 캡)
             try:
-                # ⭐ 조회 범위: 라이브 당일부터 +30일까지 (사용자 요청).
-                # 미래 끝일은 오늘로 캡 — 아임웹은 미래 주문이 없으므로 무의미.
                 live_dt = datetime.strptime(session['live_date'], '%Y-%m-%d')
                 start_dt = live_dt
                 end_dt = live_dt + timedelta(days=30)
-                if end_dt > datetime.now():
-                    end_dt = datetime.now()
+                if end_dt > datetime.now(): end_dt = datetime.now()
                 start_ym = start_dt.strftime('%Y%m%d')
                 end_ym   = end_dt.strftime('%Y%m%d')
                 imweb_orders = get_paid_orders(start_ym, end_ym)
-                logger.info(f"아임웹 주문 조회: {len(imweb_orders)}건 (기간 {start_ym}~{end_ym}, 라이브 ~ +30일)")
+                logger.info(f"아임웹 조회: {len(imweb_orders)}건 ({start_ym}~{end_ym})")
 
                 for iorder in imweb_orders:
                     info = extract_order_info(iorder)
                     if not info['amount']:
-                        logger.info(f"  ⏭️  스킵 (금액 0): name={info.get('name','')} name2={info.get('name2','')}")
                         continue
-
                     search_names = []
-                    if info.get('name'):
-                        search_names += resolve_names(conn, info['name'])
-                    if info.get('name2'):
-                        search_names += resolve_names(conn, info['name2'])
+                    if info.get('name'):  search_names += resolve_names(conn, info['name'])
+                    if info.get('name2'): search_names += resolve_names(conn, info['name2'])
                     search_names = list(dict.fromkeys(filter(None, search_names)))
 
-                    logger.info(f"  🔍 아임웹 주문: '{info.get('name','')}'({info.get('name2','')}) {info['amount']:,}원 → 검색이름:{search_names}")
-
                     order_no = str(iorder.get('order_no') or iorder.get('orderNo') or '')
+                    buyer, conf, reason = find_buyer_match(conn, sid, search_names, info['amount'])
 
-                    buyer, confidence, reason = find_buyer_match(
-                        conn, sid, search_names, info['amount']
-                    )
-
-                    if confidence == 'high':
+                    if conf == 'high':
                         for oid in buyer['order_ids']:
-                            conn.execute('''UPDATE orders
-                                           SET status='confirmed', confirmed_at=?, pay_type='card'
-                                           WHERE id=?''', (info['paid_at'], oid))
+                            conn.execute("UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='card' WHERE id=?",
+                                         (info['paid_at'], oid))
                         imweb_confirmed += 1
-                        logger.info(f"  ✅ 카드결제 확인: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건, {reason})")
-                    elif confidence in ('medium', 'low'):
+                        logger.info(f"  ✅ 카드결제: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원")
+                    elif conf in ('medium', 'low'):
                         save_candidate(conn, sid, 'imweb', order_no,
                                        info.get('name'), info.get('name2'),
                                        info['amount'], info['paid_at'],
-                                       buyer, confidence, reason)
-                    else:
-                        logger.info(f"  ⚠️  매칭/후보 실패: '{info.get('name','')}' {info['amount']:,}원 — {reason}")
+                                       buyer, conf, reason)
             except Exception as e:
                 imweb_status = 'error'
                 error_msg = f"아임웹:{str(e)}"
                 logger.error(f"아임웹 조회 오류: {e}")
 
-            # 2. 미매칭 SMS 재대조
+            # 2) 미매칭 SMS 재대조 (SUM 합산)
             try:
-                unmatched_sms = conn.execute(
-                    "SELECT * FROM sms_payments WHERE matched=0"
-                ).fetchall()
+                unmatched_sms = conn.execute("SELECT * FROM sms_payments WHERE matched=0").fetchall()
                 for sms in unmatched_sms:
                     sms = dict(sms)
-                    amt  = sms.get('parsed_amount') or 0
+                    amt = sms.get('parsed_amount') or 0
                     sname = sms.get('parsed_name')
-                    if not amt:
-                        continue
+                    if not amt: continue
                     search_names = resolve_names(conn, sname) if sname else [sname or '']
-                    buyer, confidence, reason = find_buyer_match(
-                        conn, sid, search_names, amt
-                    )
-                    if confidence == 'high':
+                    buyer, conf, reason = find_buyer_match(conn, sid, search_names, amt)
+                    if conf == 'high':
                         for oid in buyer['order_ids']:
-                            conn.execute('''UPDATE orders
-                                           SET status='confirmed', confirmed_at=?,
-                                               pay_type='transfer', bank_date=?
-                                           WHERE id=?''',
+                            conn.execute("UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='transfer', bank_date=? WHERE id=?",
                                          (datetime.now().isoformat(), sms['received_at'], oid))
-                        conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (sms['id'],))
+                        conn.execute("UPDATE sms_payments SET matched=1 WHERE id=?", (sms['id'],))
                         sms_confirmed += 1
-                        logger.info(f"  ✅ SMS 재매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건, {reason})")
-                    elif confidence in ('medium', 'low'):
-                        save_candidate(conn, sid, 'sms', sms['id'],
-                                       sname, None, amt, sms['received_at'],
-                                       buyer, confidence, reason)
+                        logger.info(f"  ✅ SMS 재매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원")
+                    elif conf in ('medium', 'low'):
+                        save_candidate(conn, sid, 'sms', sms['id'], sname, None,
+                                       amt, sms['received_at'], buyer, conf, reason)
             except Exception as e:
                 sms_status = 'error'
                 error_msg = (error_msg or '') + f" SMS:{str(e)}"
                 logger.error(f"SMS 재대조 오류: {e}")
 
-            # 로그 기록
-            conn.execute('''INSERT INTO check_logs
-                (session_id, check_date, check_time, imweb_status, sms_status,
-                 imweb_confirmed, sms_confirmed, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                (sid, today, now_time, imweb_status, sms_status,
-                 imweb_confirmed, sms_confirmed, error_msg))
+            conn.execute("INSERT INTO check_logs (session_id, check_date, check_time, imweb_status, sms_status, imweb_confirmed, sms_confirmed, error_message) VALUES (?,?,?,?,?,?,?,?)",
+                         (sid, today, now_time, imweb_status, sms_status, imweb_confirmed, sms_confirmed, error_msg))
 
         conn.commit()
-        logger.info(f"자동 입금확인 완료 (이번 회차 마지막 세션 기준 카드:{imweb_confirmed} SMS:{sms_confirmed})")
-
+        logger.info("자동 입금확인 종료")
     except Exception as e:
         logger.error(f"자동확인 오류: {e}")
         conn.rollback()
@@ -1100,10 +947,15 @@ def run_auto_check():
         conn.close()
 
 
-# ══════════════════════════════════════════════════════════════════
-#  서버 시작
-# ══════════════════════════════════════════════════════════════════
 if __name__ == '__main__':
     init_db()
 
-    scheduler = BackgroundSchedule
+    scheduler = BackgroundScheduler(timezone='Asia/Seoul')
+    scheduler.add_job(run_auto_check, 'interval', minutes=30,
+                      id='interval_check', replace_existing=True)
+    scheduler.start()
+    logger.info("⏰ 스케줄러 시작 (30분마다 자동 확인)")
+
+    PORT = int(os.environ.get('PORT', 5000))
+    logger.info(f"🌿 지양하월시아 서버 시작! 포트: {PORT}")
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
