@@ -969,10 +969,19 @@ def run_auto_check():
 
     conn = get_conn()
     try:
+        # ⭐ pending 주문이 1건이라도 있는 모든 세션을 처리한다.
+        # 라이브 날짜가 지나도 아임웹/SMS는 늦게 들어올 수 있으므로
+        # check_end 만료 조건은 의도적으로 빼버린다. 미아옹 5/12 주문이
+        # 5/1 라이브 세션의 check_end(5/8) 이후에도 들어오기 때문.
         sessions = conn.execute('''
             SELECT * FROM live_sessions
-            WHERE ? BETWEEN live_date AND check_end
-        ''', (today,)).fetchall()
+            WHERE EXISTS (
+                SELECT 1 FROM orders o
+                WHERE o.session_id = live_sessions.id AND o.status = 'pending'
+            )
+            ORDER BY live_date DESC
+        ''').fetchall()
+        logger.info(f"처리할 세션: {len(sessions)}건 (pending 주문 보유)")
 
         for session in sessions:
             session = dict(session)
@@ -987,18 +996,17 @@ def run_auto_check():
 
             # 1. 아임웹 카드결제 확인
             try:
-                # 사용자가 라이브 날짜를 잘못 입력했어도(예: 오늘로 박혀버린 경우)
-                # 라이브 14일 전부터 check_end까지 넓게 조회. 미아옹처럼 라이브 이전 며칠
-                # 사이에 들어온 주문도 잡힘.
+                # ⭐ 조회 범위: 라이브 당일부터 +30일까지 (사용자 요청).
+                # 미래 끝일은 오늘로 캡 — 아임웹은 미래 주문이 없으므로 무의미.
                 live_dt = datetime.strptime(session['live_date'], '%Y-%m-%d')
-                end_dt  = datetime.strptime(session['check_end'], '%Y-%m-%d')
-                start_dt = live_dt - timedelta(days=14)
+                start_dt = live_dt
+                end_dt = live_dt + timedelta(days=30)
                 if end_dt > datetime.now():
                     end_dt = datetime.now()
                 start_ym = start_dt.strftime('%Y%m%d')
                 end_ym   = end_dt.strftime('%Y%m%d')
                 imweb_orders = get_paid_orders(start_ym, end_ym)
-                logger.info(f"아임웹 주문 조회: {len(imweb_orders)}건 (기간 {start_ym}~{end_ym}, 라이브 -14일부터)")
+                logger.info(f"아임웹 주문 조회: {len(imweb_orders)}건 (기간 {start_ym}~{end_ym}, 라이브 ~ +30일)")
 
                 for iorder in imweb_orders:
                     info = extract_order_info(iorder)
@@ -1098,12 +1106,4 @@ def run_auto_check():
 if __name__ == '__main__':
     init_db()
 
-    scheduler = BackgroundScheduler(timezone='Asia/Seoul')
-    scheduler.add_job(run_auto_check, 'interval', minutes=30,
-                      id='interval_check', replace_existing=True)
-    scheduler.start()
-    logger.info("⏰ 스케줄러 시작 (30분마다 자동 확인)")
-
-    PORT = int(os.environ.get('PORT', 5000))
-    logger.info(f"🌿 지양하월시아 서버 시작! 포트: {PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+    scheduler = BackgroundSchedule
