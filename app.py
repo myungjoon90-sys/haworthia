@@ -512,9 +512,12 @@ def list_candidates():
 
 @app.route('/api/candidates/<int:cand_id>/approve', methods=['POST'])
 def approve_candidate(cand_id):
-    """의심후보 승인 → 추정된 주문을 입금확인 처리. 필요시 다른 주문에 붙이는 것도 지원."""
+    """
+    의심후보 승인 → 같은 buyer_name + session의 모든 pending 주문을 한꺼번에 confirmed 처리.
+    body로 buyer_name을 넘기면 그 이름으로 덮어쓰기 가능 (잘못 추정된 후보를 다른 사람에게 붙일 때).
+    """
     data = request.get_json(silent=True) or {}
-    override_order_id = data.get('order_id')  # 사용자가 다른 주문에 붙이고 싶을 때
+    override_buyer = (data.get('buyer_name') or '').strip()
 
     conn = get_conn()
     try:
@@ -523,24 +526,31 @@ def approve_candidate(cand_id):
             return jsonify({'error': '후보 없음'}), 404
         cand = dict(cand)
 
-        target_order_id = override_order_id or cand.get('candidate_order_id')
-        if not target_order_id:
-            return jsonify({'error': '연결할 주문을 지정해주세요 (order_id)'}), 400
+        target_buyer = override_buyer or cand.get('candidate_buyer_name')
+        target_session = cand.get('session_id')
+        if not target_buyer:
+            return jsonify({'error': '연결할 구매자 이름을 지정해주세요 (buyer_name)'}), 400
 
-        order = conn.execute('SELECT * FROM orders WHERE id=?', (target_order_id,)).fetchone()
-        if not order:
-            return jsonify({'error': f'order_id={target_order_id} 주문을 찾을 수 없음'}), 404
+        # 해당 구매자의 모든 pending 행 한꺼번에 처리
+        pending = conn.execute(
+            "SELECT id, amount FROM orders WHERE session_id=? AND buyer_name=? AND status='pending'",
+            (target_session, target_buyer)
+        ).fetchall()
+        if not pending:
+            return jsonify({'error': f"세션{target_session}에 '{target_buyer}' 의 pending 주문이 없음"}), 404
 
         pay_type = 'card' if cand['source'] == 'imweb' else 'transfer'
         now = datetime.now().isoformat()
-        conn.execute('''UPDATE orders
-                       SET status='confirmed', confirmed_at=?, pay_type=?, bank_date=?
-                       WHERE id=?''',
-                     (now, pay_type, cand.get('paid_at'), target_order_id))
+        for row in pending:
+            conn.execute('''UPDATE orders
+                           SET status='confirmed', confirmed_at=?, pay_type=?, bank_date=?
+                           WHERE id=?''',
+                         (now, pay_type, cand.get('paid_at'), row['id']))
+
         conn.execute('''UPDATE match_candidates
-                       SET status='approved', decided_at=?, candidate_order_id=?
+                       SET status='approved', decided_at=?, candidate_buyer_name=?
                        WHERE id=?''',
-                     (now, target_order_id, cand_id))
+                     (now, target_buyer, cand_id))
         # SMS 매칭됨 표시
         if cand['source'] == 'sms' and cand.get('source_ref'):
             try:
@@ -548,8 +558,9 @@ def approve_candidate(cand_id):
             except Exception:
                 pass
         conn.commit()
-        logger.info(f"  👍 의심후보 승인: cand={cand_id} → order={target_order_id} ({order['buyer_name']})")
-        return jsonify({'ok': True, 'order_id': target_order_id, 'buyer_name': order['buyer_name']})
+        total = sum(r['amount'] for r in pending)
+        logger.info(f"  👍 의심후보 승인: cand={cand_id} → buyer='{target_buyer}' ({len(pending)}건 합계 {total:,}원)")
+        return jsonify({'ok': True, 'buyer_name': target_buyer, 'rows_confirmed': len(pending), 'total_amount': total})
     finally:
         conn.close()
 
@@ -777,72 +788,102 @@ def amount_matches(paid, ordered):
 def find_buyer_match(conn, session_id, search_names, amount):
     """
     퍼지 매칭으로 거래명세표 구매자 후보를 등급별로 찾는다.
+    ⭐ 거래명세표의 한 구매자가 여러 행에 걸쳐 있을 수 있으므로
+       buyer_name별 SUM(amount) 기준으로 매칭한다. (1행 1매칭 X)
     Returns:
-        (best_order_row, confidence, reason)
-        confidence: 'high'    → buyer_name == search_name AND 금액일치 → 자동확인 OK
-                    'medium'  → buyer_name 부분포함 또는 정규화일치 AND 금액일치 → 의심후보
-                    'low'     → 이름은 비슷한데 금액 다름 → 의심후보 (이름만)
-                    None      → 후보 없음 (정보 부족)
+        (buyer_dict_or_None, confidence, reason)
+        buyer_dict: {'buyer_name': str, 'total_amount': int, 'order_ids': [int,...]}
+        confidence: 'high'    → 이름 정확일치 + 합산금액 일치 → 자동확인
+                    'medium'  → 정규화/부분일치 + 합산금액 일치, 또는 합산금액만 일치
+                    'low'     → 이름 유사인데 합산금액 다름
+                    None      → 후보 없음
     """
     if not search_names:
         return (None, None, '검색이름 없음')
 
-    pending = conn.execute(
-        "SELECT * FROM orders WHERE session_id=? AND status='pending'",
-        (session_id,)
-    ).fetchall()
-    if not pending:
+    # 구매자별로 합산 (pending만)
+    grouped_rows = conn.execute('''
+        SELECT buyer_name,
+               SUM(amount) AS total_amount,
+               COUNT(*)    AS row_count,
+               GROUP_CONCAT(id) AS order_ids
+        FROM orders
+        WHERE session_id=? AND status='pending'
+        GROUP BY buyer_name
+    ''', (session_id,)).fetchall()
+    if not grouped_rows:
         return (None, None, '대기 주문 없음')
 
-    # 1) 정확 일치 + 금액 일치 (자동확인)
-    for name in search_names:
-        for order in pending:
-            if order['buyer_name'] == name and amount_matches(amount, order['amount']):
-                return (order, 'high', f"이름 정확일치({name}) + 금액일치")
+    def to_dict(r):
+        return {
+            'buyer_name': r['buyer_name'],
+            'total_amount': int(r['total_amount'] or 0),
+            'order_ids': [int(x) for x in (r['order_ids'] or '').split(',') if x],
+        }
 
-    # 2) 정규화 일치 또는 부분포함 + 금액 일치 (의심후보 medium)
+    grouped = [to_dict(r) for r in grouped_rows]
+
+    # 1) 정확 일치 + 합산 금액 일치 (high → 자동확인)
+    for name in search_names:
+        for g in grouped:
+            if g['buyer_name'] == name and amount_matches(amount, g['total_amount']):
+                return (g, 'high', f"이름 정확일치({name}) + 합산금액일치")
+
+    # 2) 정규화/부분포함 + 합산 금액 일치 (medium)
     norm_searches = {n: _norm(n) for n in search_names if n}
     for name, nname in norm_searches.items():
         if not nname:
             continue
-        for order in pending:
-            buyer = order['buyer_name'] or ''
+        for g in grouped:
+            buyer = g['buyer_name'] or ''
             nbuyer = _norm(buyer)
             if not nbuyer:
                 continue
-            # 정규화 일치
-            if nname == nbuyer and amount_matches(amount, order['amount']):
-                return (order, 'medium', f"정규화 일치({name}↔{buyer}) + 금액일치")
-            # 부분 포함
-            if (nname in nbuyer or nbuyer in nname) and amount_matches(amount, order['amount']):
-                return (order, 'medium', f"부분포함({name}↔{buyer}) + 금액일치")
+            if nname == nbuyer and amount_matches(amount, g['total_amount']):
+                return (g, 'medium', f"정규화 일치({name}↔{buyer}) + 합산금액일치")
+            if (nname in nbuyer or nbuyer in nname) and amount_matches(amount, g['total_amount']):
+                return (g, 'medium', f"부분포함({name}↔{buyer}) + 합산금액일치")
 
-    # 3) 금액만 일치 (단 1명일 때만 의심후보)
-    amount_only = [o for o in pending if amount_matches(amount, o['amount'])]
+    # 3) 합산금액만 일치 (1명일 때만 medium)
+    amount_only = [g for g in grouped if amount_matches(amount, g['total_amount'])]
     if len(amount_only) == 1:
-        order = amount_only[0]
-        return (order, 'medium', f"금액만 일치(이름다름: {search_names[0]}↔{order['buyer_name']})")
+        g = amount_only[0]
+        return (g, 'medium', f"합산금액만 일치(이름다름: {search_names[0]}↔{g['buyer_name']})")
+    elif len(amount_only) > 1:
+        # 여러 명 합산금액이 같음 → 가장 첫 번째를 low로 등록(사용자가 선택)
+        g = amount_only[0]
+        return (g, 'low', f"합산금액 같은 사람 {len(amount_only)}명 — 사용자 선택 필요 (첫번째: {g['buyer_name']})")
 
-    # 4) 이름은 비슷한데 금액 안 맞음 (low)
+    # 4) 이름은 비슷한데 합산금액 다름 (low)
     for name, nname in norm_searches.items():
         if not nname:
             continue
-        for order in pending:
-            buyer = order['buyer_name'] or ''
+        for g in grouped:
+            buyer = g['buyer_name'] or ''
             nbuyer = _norm(buyer)
             if nname == nbuyer or (nname and nbuyer and (nname in nbuyer or nbuyer in nname)):
-                return (order, 'low', f"이름유사({name}↔{buyer}) 금액다름({amount:,}↔{order['amount']:,})")
+                return (g, 'low', f"이름유사({name}↔{buyer}) 합산금액다름({amount:,}↔{g['total_amount']:,})")
 
     return (None, None, f"후보 없음 (이름 {search_names}, 금액 {amount:,}원)")
 
 
 def save_candidate(conn, session_id, source, source_ref,
                    paid_name, paid_name2, amount, paid_at,
-                   order_row, confidence, reason):
-    """의심후보로 저장 (UNIQUE 충돌은 무시)"""
-    order_id   = order_row['id']         if order_row else None
-    buyer_name = order_row['buyer_name'] if order_row else None
-    cand_amt   = order_row['amount']     if order_row else None
+                   buyer_dict, confidence, reason):
+    """
+    의심후보로 저장 (UNIQUE 충돌은 무시).
+    buyer_dict: find_buyer_match가 반환한 {'buyer_name', 'total_amount', 'order_ids'} 또는 None.
+    candidate_order_id에는 첫 번째 order_id를 저장 (UNIQUE 키 용도) — 승인은 buyer_name으로 일괄.
+    """
+    if buyer_dict:
+        buyer_name = buyer_dict.get('buyer_name')
+        cand_amt   = buyer_dict.get('total_amount')
+        order_ids  = buyer_dict.get('order_ids') or []
+        first_id   = order_ids[0] if order_ids else None
+    else:
+        buyer_name = None
+        cand_amt   = None
+        first_id   = None
     try:
         conn.execute('''
             INSERT INTO match_candidates
@@ -852,9 +893,9 @@ def save_candidate(conn, session_id, source, source_ref,
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
         ''', (session_id, source, str(source_ref) if source_ref else '',
               paid_name, paid_name2, amount, paid_at,
-              order_id, buyer_name, cand_amt,
+              first_id, buyer_name, cand_amt,
               confidence, reason, datetime.now().isoformat()))
-        logger.info(f"  🤔 의심후보 등록: src={source} '{paid_name}' {amount:,}원 → 추정 '{buyer_name}' ({confidence}: {reason})")
+        logger.info(f"  🤔 의심후보 등록: src={source} '{paid_name}' {amount:,}원 → 추정 '{buyer_name}' (합산:{cand_amt}, {confidence}: {reason})")
     except Exception as e:
         if 'UNIQUE' not in str(e):
             logger.warning(f"의심후보 저장 실패: {e}")
@@ -888,13 +929,15 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
 
         for sess in sessions:
             sid = sess['id']
-            order, confidence, reason = find_buyer_match(
+            buyer, confidence, reason = find_buyer_match(
                 conn, sid, search_names or [name or ''], amount
             )
             if confidence == 'high':
-                conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?,
-                                       pay_type='transfer', bank_date=? WHERE id=?''',
-                             (now, recv_time, order['id']))
+                # 해당 구매자의 모든 pending 행을 한꺼번에 confirmed 처리
+                for oid in buyer['order_ids']:
+                    conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?,
+                                           pay_type='transfer', bank_date=? WHERE id=?''',
+                                 (now, recv_time, oid))
                 if sms_id is not None:
                     conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (sms_id,))
                 else:
@@ -902,12 +945,12 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
                                    WHERE parsed_amount=? AND COALESCE(parsed_name,'')=COALESCE(?,'') AND matched=0''',
                                  (amount, name))
                 conn.commit()
-                logger.info(f"  ✅ SMS 자동매칭: {order['buyer_name']} {order['amount']:,}원 ({reason})")
+                logger.info(f"  ✅ SMS 자동매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건, {reason})")
                 return
             elif confidence in ('medium', 'low'):
                 save_candidate(conn, sid, 'sms', sms_id,
                                name, None, amount, recv_time,
-                               order, confidence, reason)
+                               buyer, confidence, reason)
                 conn.commit()
                 return
         logger.info(f"  ⚠️ SMS 매칭/후보 모두 실패: '{name or '-'}' {amount:,}원")
@@ -944,12 +987,18 @@ def run_auto_check():
 
             # 1. 아임웹 카드결제 확인
             try:
-                start_ym = session['live_date'].replace('-', '')
-                end_ym   = session['check_end'].replace('-', '')
-                if end_ym > today_ym:
-                    end_ym = today_ym
+                # 사용자가 라이브 날짜를 잘못 입력했어도(예: 오늘로 박혀버린 경우)
+                # 라이브 14일 전부터 check_end까지 넓게 조회. 미아옹처럼 라이브 이전 며칠
+                # 사이에 들어온 주문도 잡힘.
+                live_dt = datetime.strptime(session['live_date'], '%Y-%m-%d')
+                end_dt  = datetime.strptime(session['check_end'], '%Y-%m-%d')
+                start_dt = live_dt - timedelta(days=14)
+                if end_dt > datetime.now():
+                    end_dt = datetime.now()
+                start_ym = start_dt.strftime('%Y%m%d')
+                end_ym   = end_dt.strftime('%Y%m%d')
                 imweb_orders = get_paid_orders(start_ym, end_ym)
-                logger.info(f"아임웹 주문 조회: {len(imweb_orders)}건 (기간 {start_ym}~{end_ym})")
+                logger.info(f"아임웹 주문 조회: {len(imweb_orders)}건 (기간 {start_ym}~{end_ym}, 라이브 -14일부터)")
 
                 for iorder in imweb_orders:
                     info = extract_order_info(iorder)
@@ -968,21 +1017,22 @@ def run_auto_check():
 
                     order_no = str(iorder.get('order_no') or iorder.get('orderNo') or '')
 
-                    order, confidence, reason = find_buyer_match(
+                    buyer, confidence, reason = find_buyer_match(
                         conn, sid, search_names, info['amount']
                     )
 
                     if confidence == 'high':
-                        conn.execute('''UPDATE orders
-                                       SET status='confirmed', confirmed_at=?, pay_type='card'
-                                       WHERE id=?''', (info['paid_at'], order['id']))
+                        for oid in buyer['order_ids']:
+                            conn.execute('''UPDATE orders
+                                           SET status='confirmed', confirmed_at=?, pay_type='card'
+                                           WHERE id=?''', (info['paid_at'], oid))
                         imweb_confirmed += 1
-                        logger.info(f"  ✅ 카드결제 확인: {order['buyer_name']} {order['amount']:,}원 ({reason})")
+                        logger.info(f"  ✅ 카드결제 확인: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건, {reason})")
                     elif confidence in ('medium', 'low'):
                         save_candidate(conn, sid, 'imweb', order_no,
                                        info.get('name'), info.get('name2'),
                                        info['amount'], info['paid_at'],
-                                       order, confidence, reason)
+                                       buyer, confidence, reason)
                     else:
                         logger.info(f"  ⚠️  매칭/후보 실패: '{info.get('name','')}' {info['amount']:,}원 — {reason}")
             except Exception as e:
@@ -1002,22 +1052,23 @@ def run_auto_check():
                     if not amt:
                         continue
                     search_names = resolve_names(conn, sname) if sname else [sname or '']
-                    order, confidence, reason = find_buyer_match(
+                    buyer, confidence, reason = find_buyer_match(
                         conn, sid, search_names, amt
                     )
                     if confidence == 'high':
-                        conn.execute('''UPDATE orders
-                                       SET status='confirmed', confirmed_at=?,
-                                           pay_type='transfer', bank_date=?
-                                       WHERE id=?''',
-                                     (datetime.now().isoformat(), sms['received_at'], order['id']))
+                        for oid in buyer['order_ids']:
+                            conn.execute('''UPDATE orders
+                                           SET status='confirmed', confirmed_at=?,
+                                               pay_type='transfer', bank_date=?
+                                           WHERE id=?''',
+                                         (datetime.now().isoformat(), sms['received_at'], oid))
                         conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (sms['id'],))
                         sms_confirmed += 1
-                        logger.info(f"  ✅ SMS 재매칭: {order['buyer_name']} {order['amount']:,}원 ({reason})")
+                        logger.info(f"  ✅ SMS 재매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건, {reason})")
                     elif confidence in ('medium', 'low'):
                         save_candidate(conn, sid, 'sms', sms['id'],
                                        sname, None, amt, sms['received_at'],
-                                       order, confidence, reason)
+                                       buyer, confidence, reason)
             except Exception as e:
                 sms_status = 'error'
                 error_msg = (error_msg or '') + f" SMS:{str(e)}"

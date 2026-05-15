@@ -933,6 +933,20 @@ async function loadStatus() {
 // ══════════════════════════════════════════════════════════════════
 document.getElementById('liveDateInput').valueAsDate = new Date();
 
+// 파일명에서 라이브 방송 날짜(YYYY-MM-DD or YYYYMMDD) 자동 추출
+function extractLiveDateFromFilename(name) {
+  if (!name) return null;
+  let m = name.match(/(20\d{2})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = name.match(/(20\d{2})(\d{2})(\d{2})/);
+  if (m) {
+    // 유효 날짜 확인
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    if (!isNaN(d.getTime())) return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  return null;
+}
+
 function handleAutoUpload(files) {
   const f = files[0];
   if (!f) return;
@@ -940,6 +954,13 @@ function handleAutoUpload(files) {
   zone.querySelector('.upload-label').textContent = f.name;
   zone.querySelector('.upload-hint').textContent = `${(f.size/1024).toFixed(1)} KB`;
   zone.classList.add('has-file');
+
+  // ⭐ 파일명에서 라이브 방송 날짜 자동 추출 → 입력칸 덮어쓰기
+  const detected = extractLiveDateFromFilename(f.name);
+  if (detected) {
+    document.getElementById('liveDateInput').value = detected;
+    toast(`📅 라이브 방송 날짜 자동 인식: ${detected}`, 'ok');
+  }
 }
 
 async function submitUpload() {
