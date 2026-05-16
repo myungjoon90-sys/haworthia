@@ -402,6 +402,24 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     </div>
   </div>
 
+  <!-- 은행 입금내역 수동 업로드 (KB/농협 .xls) -->
+  <div class="sec-title">💰 은행 입금내역 수동 업로드 (선택)</div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-body">
+      <p style="color:var(--muted);font-size:13px;margin-bottom:10px;">
+        은행에서 받은 입금내역 엑셀(.xls/.xlsx)을 올리면 각 행을 자동 매칭합니다.
+        이름·금액이 정확히 일치하면 입금확인으로, 부분 일치는 의심후보로 들어갑니다.
+      </p>
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <input type="file" id="bankInput" accept=".xls,.xlsx" onchange="handleBankUpload(this.files)">
+        </div>
+        <button class="btn btn-primary" onclick="submitBankUpload()" id="bankUploadBtn" style="align-self:flex-end;">⬆️ 은행 엑셀 업로드</button>
+      </div>
+      <div id="bankResult" style="margin-top:8px;font-size:13px;color:var(--muted);"></div>
+    </div>
+  </div>
+
   <!-- 7일 자동확인 타임라인 -->
   <div class="timeline-wrap" id="timelineWrap" style="display:none;">
     <div class="timeline-title">
@@ -613,7 +631,14 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   </div>
 
   <div class="card">
-    <div class="card-head"><h3>🔗 매핑 추가</h3></div>
+    <div class="card-head">
+      <h3>🔗 매핑 추가</h3>
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="downloadMappings()" title="현재 매핑 전체를 CSV로 다운로드">⬇ 매핑 다운로드</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('mapImportInput').click()" title="CSV로 매핑 일괄 업로드">⬆ 매핑 업로드</button>
+        <input type="file" id="mapImportInput" accept=".csv,.txt" style="display:none;" onchange="uploadMappings(this.files)">
+      </div>
+    </div>
     <div class="card-body">
       <div class="form-row">
         <div class="form-group">
@@ -1496,6 +1521,77 @@ async function downloadDeliveryExcel() {
 // ══════════════════════════════════════════════════════════════════
 //  닉네임 매핑
 // ══════════════════════════════════════════════════════════════════
+async function handleBankUpload(files) {
+  const f = files[0];
+  if (!f) return;
+  document.getElementById('bankResult').textContent = `선택됨: ${f.name} (${(f.size/1024).toFixed(1)} KB)`;
+}
+
+async function submitBankUpload() {
+  const inp = document.getElementById('bankInput');
+  if (!inp.files[0]) { toast('은행 엑셀 파일을 선택하세요', 'err'); return; }
+  const btn = document.getElementById('bankUploadBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 업로드 중...';
+  const fd = new FormData();
+  fd.append('file', inp.files[0]);
+  try {
+    const r = await fetch(API + '/api/bank/upload', {method:'POST', body:fd});
+    const d = await r.json();
+    if (d.ok) {
+      const msg = `✅ 총 ${d.total}건 → 자동확인 ${d.matched_high}, 의심후보 ${d.matched_candidate}, 매칭실패 ${d.no_match}`;
+      document.getElementById('bankResult').innerHTML = `<span style="color:var(--green);">${msg}</span>`;
+      toast(msg, 'ok');
+      loadAutoPage();
+      inp.value = '';
+    } else {
+      toast('오류: ' + (d.error || '알 수 없는 오류'), 'err');
+      document.getElementById('bankResult').innerHTML = `<span style="color:var(--red);">${d.error || '실패'}</span>`;
+    }
+  } catch(e) {
+    toast('서버 연결 실패', 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⬆️ 은행 엑셀 업로드';
+  }
+}
+
+async function downloadMappings() {
+  try {
+    const r = await fetch(API + '/api/mappings/export');
+    if (!r.ok) { toast('다운로드 실패', 'err'); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    a.download = `nick_mappings_${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 100);
+    toast('CSV 다운로드 완료', 'ok');
+  } catch(e) { toast('다운로드 오류: ' + e.message, 'err'); }
+}
+
+async function uploadMappings(files) {
+  if (!files || !files[0]) return;
+  if (!confirm(`'${files[0].name}' 의 매핑들을 일괄 등록합니다. 같은 닉네임이 있으면 덮어씁니다. 계속할까요?`)) {
+    document.getElementById('mapImportInput').value = '';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('file', files[0]);
+  try {
+    const r = await fetch(API + '/api/mappings/import', {method:'POST', body:fd});
+    const d = await r.json();
+    if (d.ok) {
+      toast(`✅ 추가 ${d.added}, 수정 ${d.updated}, 스킵 ${d.skipped}`, 'ok');
+      loadMappings();
+    } else { toast('오류: ' + (d.error || '실패'), 'err'); }
+  } catch(e) { toast('업로드 실패', 'err'); }
+  finally { document.getElementById('mapImportInput').value = ''; }
+}
+
 async function loadMappings() {
   try {
     const r = await fetch(API + '/api/mappings');
