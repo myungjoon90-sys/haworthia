@@ -4,3 +4,4 @@ apscheduler
 openpyxl
 requests
 gunicorn
+xlrd>=2.0.1
