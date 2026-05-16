@@ -42,8 +42,14 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS nick_mappings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nickname TEXT UNIQUE,
-        realname TEXT
+        realname TEXT,
+        negative INTEGER DEFAULT 0
     )''')
+    # 기존 DB에 negative 컬럼이 없으면 ALTER로 추가 (마이그레이션)
+    try:
+        c.execute("ALTER TABLE nick_mappings ADD COLUMN negative INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # 이미 있음
 
     c.execute('''CREATE TABLE IF NOT EXISTS check_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

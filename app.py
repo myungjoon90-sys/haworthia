@@ -621,6 +621,17 @@ def approve_candidate(cand_id):
         if cand['source'] == 'sms' and cand.get('source_ref'):
             try: conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (int(cand['source_ref']),))
             except: pass
+        # ⭐ 닉네임 매핑 자동 추가 (동일인) — 받은 이름과 구매자명이 다를 때만 의미있음
+        paid_name = cand.get('paid_name')
+        if paid_name and target_buyer and paid_name != target_buyer:
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO nick_mappings (nickname, realname, negative) VALUES (?, ?, 0)",
+                    (paid_name, target_buyer)
+                )
+                logger.info(f"  🔗 매핑 자동 추가 (동일인): '{paid_name}' ↔ '{target_buyer}'")
+            except Exception as e:
+                logger.warning(f"매핑 자동추가 실패: {e}")
         conn.commit()
         total = sum(r['amount'] for r in pending)
         logger.info(f"  👍 후보 승인: cand={cand_id} → '{target_buyer}' ({len(pending)}건 합{total:,}원)")
@@ -631,10 +642,27 @@ def approve_candidate(cand_id):
 
 @app.route('/api/candidates/<int:cand_id>/reject', methods=['POST'])
 def reject_candidate(cand_id):
+    """거절 — 후보 닫기 + 닉네임 매핑에 '동일인 아님(negative=1)' 자동 추가"""
     conn = get_conn()
     try:
+        cand = conn.execute('SELECT * FROM match_candidates WHERE id=?', (cand_id,)).fetchone()
+        if not cand:
+            return jsonify({'error': '후보 없음'}), 404
+        cand = dict(cand)
         conn.execute("UPDATE match_candidates SET status='rejected', decided_at=? WHERE id=?",
                      (datetime.now().isoformat(), cand_id))
+        # ⭐ 닉네임 매핑 자동 추가 (동일인 아님) — 같은 pair 다시 후보로 만들지 않게
+        paid_name  = cand.get('paid_name')
+        buyer_name = cand.get('candidate_buyer_name')
+        if paid_name and buyer_name and paid_name != buyer_name:
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO nick_mappings (nickname, realname, negative) VALUES (?, ?, 1)",
+                    (paid_name, buyer_name)
+                )
+                logger.info(f"  🚫 매핑 자동 추가 (동일인 아님): '{paid_name}' ↔ '{buyer_name}'")
+            except Exception as e:
+                logger.warning(f"매핑 자동추가 실패: {e}")
         conn.commit()
         return jsonify({'ok': True})
     finally:
@@ -698,12 +726,18 @@ def _norm(s):
 
 
 def resolve_names(conn, name):
-    """닉네임 → 실명 매핑 (양방향)"""
+    """닉네임 → 실명 매핑 (양방향, negative=1 mapping은 제외)"""
     names = [name]
     if not name: return names
-    row = conn.execute('SELECT realname FROM nick_mappings WHERE nickname=?', (name,)).fetchone()
+    row = conn.execute(
+        "SELECT realname FROM nick_mappings WHERE nickname=? AND COALESCE(negative,0)=0",
+        (name,)
+    ).fetchone()
     if row and row['realname']: names.append(row['realname'])
-    row = conn.execute('SELECT nickname FROM nick_mappings WHERE realname=?', (name,)).fetchone()
+    row = conn.execute(
+        "SELECT nickname FROM nick_mappings WHERE realname=? AND COALESCE(negative,0)=0",
+        (name,)
+    ).fetchone()
     if row and row['nickname']: names.append(row['nickname'])
     return list(dict.fromkeys(filter(None, names)))
 
@@ -777,6 +811,15 @@ def save_candidate(conn, session_id, source, source_ref,
         first_id   = (buyer_dict.get('order_ids') or [None])[0]
     else:
         buyer_name = None; cand_amt = None; first_id = None
+    # ⭐ 사용자가 이미 [❌ 거절]한 (paid_name ↔ buyer_name) pair는 다시 후보로 만들지 않음
+    if paid_name and buyer_name:
+        neg = conn.execute(
+            "SELECT 1 FROM nick_mappings WHERE nickname=? AND realname=? AND COALESCE(negative,0)=1",
+            (paid_name, buyer_name)
+        ).fetchone()
+        if neg:
+            logger.info(f"  🚫 후보 스킵 (이전 거절): '{paid_name}'↔'{buyer_name}'")
+            return
     try:
         conn.execute('''INSERT INTO match_candidates
               (session_id, source, source_ref, paid_name, paid_name2,
