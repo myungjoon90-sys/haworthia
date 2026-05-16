@@ -272,6 +272,10 @@ def parse_invoice_excel(ws):
             continue
         item = str(row[item_col] or '').strip() if item_col >= 0 and item_col < len(row) else ''
 
+        # 총합계/소계/합계 같은 요약행 스킵 (구매자가 아님)
+        clean = name.replace(' ', '').replace('\u00a0', '')
+        if clean in {'총합계', '총계', '소계', '합계', '총합', '계', '총주문', '주문합계'}:
+            continue
         if name and amt > 0:
             orders.append({'name': name, 'item': item, 'amount': amt})
 
@@ -714,6 +718,207 @@ def sms_simulate():
     if parsed:
         match_sms_to_order(parsed, recv_iso, sms_id=sms_id)
     return jsonify({'ok': True, 'parsed': parsed, 'sms_id': sms_id})
+
+
+
+# ══════════════════════════════════════════════════════════════════
+#  은행 입금내역 엑셀 업로드 (수동 일괄 매칭)
+# ══════════════════════════════════════════════════════════════════
+def parse_bank_excel(file_storage):
+    """KB/농협 등 은행 입금내역 엑셀(.xls/.xlsx)에서 (이름, 입금액, 일시) 추출"""
+    fn = (file_storage.filename or '').lower()
+    rows = []
+    if fn.endswith('.xls') and not fn.endswith('.xlsx'):
+        try:
+            import xlrd
+        except ImportError:
+            raise RuntimeError("xls 파일을 읽으려면 xlrd 라이브러리가 필요합니다 (requirements.txt에 xlrd 추가)")
+        data = file_storage.read()
+        wb = xlrd.open_workbook(file_contents=data)
+        sheet = wb.sheet_by_index(0)
+        for r in range(sheet.nrows):
+            rows.append([sheet.cell_value(r, c) for c in range(sheet.ncols)])
+    else:
+        wb = openpyxl.load_workbook(file_storage, data_only=True)
+        ws = wb.active
+        for r in ws.values:
+            rows.append(list(r))
+
+    header_idx = name_col = amount_col = date_col = -1
+    for i, row in enumerate(rows[:20]):
+        if not row: continue
+        cells = [str(c or '').strip() for c in row]
+        ni = next((j for j, c in enumerate(cells) if '보낸' in c or '받는' in c), -1)
+        ai = next((j for j, c in enumerate(cells) if c == '입금액(원)' or c == '입금액' or '입금' in c), -1)
+        di = next((j for j, c in enumerate(cells) if '거래일' in c or '날짜' in c), -1)
+        if ni >= 0 and ai >= 0:
+            header_idx = i
+            name_col = ni
+            amount_col = ai
+            date_col = di
+            break
+    if header_idx < 0:
+        return []
+
+    deposits = []
+    for row in rows[header_idx + 1:]:
+        if not row: continue
+        name_v = row[name_col] if name_col < len(row) else ''
+        name = str(name_v or '').strip()
+        if not name: continue
+        try:
+            raw = str(row[amount_col] if amount_col < len(row) else '').replace(',', '').replace('원', '').strip()
+            if not raw or raw == '0': continue
+            amt = int(float(raw))
+        except (ValueError, TypeError):
+            continue
+        if amt <= 0: continue
+        date_str = ''
+        if date_col >= 0 and date_col < len(row):
+            date_str = str(row[date_col] or '').strip()
+        deposits.append({'name': name, 'amount': amt, 'date': date_str})
+    return deposits
+
+
+@app.route('/api/bank/upload', methods=['POST'])
+def upload_bank():
+    """은행 입금내역 엑셀 업로드 → 각 행을 SMS와 동일하게 매칭 (자동확인 or 의심후보)"""
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    file = request.files['file']
+    try:
+        deposits = parse_bank_excel(file)
+    except Exception as e:
+        return jsonify({'error': f'엑셀 파싱 오류: {e}'}), 400
+
+    if not deposits:
+        return jsonify({'error': '입금 내역을 찾을 수 없습니다 (헤더에 "보낸분/받는분" + "입금액"이 있어야 함)'}), 400
+
+    matched_high = matched_cand = no_match = 0
+    for d in deposits:
+        try:
+            recv_iso = datetime.now().isoformat()
+            conn = get_conn()
+            cur = conn.execute(
+                "INSERT INTO sms_payments (sender, body, parsed_name, parsed_amount, received_at) VALUES (?,?,?,?,?)",
+                ('BANK_EXCEL', f"엑셀:{d['name']} {d['amount']:,}원 {d.get('date','')}",
+                 d['name'], d['amount'], recv_iso)
+            )
+            sms_id = cur.lastrowid
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"은행 입금 저장 오류: {e}")
+            no_match += 1
+            continue
+        try:
+            parsed = {'name': d['name'], 'amount': d['amount'], 'bank': '엑셀'}
+            match_sms_to_order(parsed, recv_iso, sms_id=sms_id)
+            conn = get_conn()
+            row = conn.execute("SELECT matched FROM sms_payments WHERE id=?", (sms_id,)).fetchone()
+            matched = (row['matched'] == 1) if row else False
+            if matched:
+                matched_high += 1
+            else:
+                cand = conn.execute(
+                    "SELECT 1 FROM match_candidates WHERE source='sms' AND source_ref=? AND status='open'",
+                    (str(sms_id),)
+                ).fetchone()
+                if cand: matched_cand += 1
+                else: no_match += 1
+            conn.close()
+        except Exception as e:
+            logger.error(f"은행 입금 매칭 오류: {e}")
+            no_match += 1
+
+    logger.info(f"📥 은행입금 업로드: 총 {len(deposits)}건 → 자동확인 {matched_high}, 의심후보 {matched_cand}, 매칭실패 {no_match}")
+    return jsonify({
+        'ok': True,
+        'total': len(deposits),
+        'matched_high': matched_high,
+        'matched_candidate': matched_cand,
+        'no_match': no_match
+    })
+
+
+# ══════════════════════════════════════════════════════════════════
+#  닉네임 매핑 CSV Export / Import
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/mappings/export', methods=['GET'])
+def export_mappings():
+    """닉네임 매핑 전체를 CSV로 다운로드"""
+    import csv
+    from io import StringIO
+    from flask import Response
+    conn = get_conn()
+    rows = conn.execute(
+        'SELECT nickname, realname, COALESCE(negative,0) as negative FROM nick_mappings ORDER BY nickname'
+    ).fetchall()
+    conn.close()
+    buf = StringIO()
+    buf.write('﻿')  # UTF-8 BOM (Excel 호환)
+    w = csv.writer(buf)
+    w.writerow(['nickname', 'realname', 'negative'])
+    for r in rows:
+        w.writerow([r['nickname'], r['realname'], r['negative']])
+    fname = f'nick_mappings_{datetime.now().strftime("%Y%m%d_%H%M")}.csv'
+    return Response(buf.getvalue(),
+                    mimetype='text/csv; charset=utf-8',
+                    headers={'Content-Disposition': f'attachment; filename={fname}'})
+
+
+@app.route('/api/mappings/import', methods=['POST'])
+def import_mappings():
+    """CSV 업로드로 닉네임 매핑 일괄 추가 (기존 nickname과 충돌 시 덮어쓰기)"""
+    import csv
+    from io import StringIO
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    file = request.files['file']
+    try:
+        raw = file.read()
+        try:
+            text = raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            text = raw.decode('cp949')
+    except Exception as e:
+        return jsonify({'error': f'파일 읽기 오류: {e}'}), 400
+
+    added = updated = skipped = 0
+    conn = get_conn()
+    try:
+        reader = csv.DictReader(StringIO(text))
+        # 컬럼 헤더 정규화
+        fieldnames = [(fn or '').strip().lower() for fn in (reader.fieldnames or [])]
+        # nickname/realname 컬럼이 있는지 확인
+        if 'nickname' not in fieldnames or 'realname' not in fieldnames:
+            return jsonify({'error': "CSV 첫 줄에 'nickname,realname,negative' 헤더가 필요합니다"}), 400
+        # DictReader는 원본 키로 접근하므로 fieldnames 수정 후 재 reader
+        reader = csv.DictReader(StringIO(text))
+        for row in reader:
+            nick = ((row.get('nickname') or row.get('Nickname') or '').strip())
+            real = ((row.get('realname') or row.get('Realname') or '').strip())
+            neg_raw = ((row.get('negative') or '0').strip().lower())
+            neg = 1 if neg_raw in ('1', 'true', 'y', 'yes') else 0
+            if not nick or not real:
+                skipped += 1
+                continue
+            try:
+                existing = conn.execute('SELECT id FROM nick_mappings WHERE nickname=?', (nick,)).fetchone()
+                conn.execute(
+                    "INSERT OR REPLACE INTO nick_mappings (nickname, realname, negative) VALUES (?,?,?)",
+                    (nick, real, neg)
+                )
+                if existing: updated += 1
+                else: added += 1
+            except Exception as e:
+                skipped += 1
+                logger.warning(f"매핑 import 행 스킵: {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info(f"📤 매핑 import: 추가 {added}, 수정 {updated}, 스킵 {skipped}")
+    return jsonify({'ok': True, 'added': added, 'updated': updated, 'skipped': skipped})
 
 
 # ══════════════════════════════════════════════════════════════════
