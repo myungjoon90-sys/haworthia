@@ -1,0 +1,1786 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>지양하월시아 · 입금확인 시스템</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface2: #1c2330;
+  --border: #30363d; --border2: #21262d;
+  --green: #3fb950; --green-dim: #1a4a25; --green-border: #2d6a38;
+  --yellow: #d29922; --yellow-dim: #3d2e0a; --yellow-border: #6a4e0a;
+  --red: #f85149; --red-dim: #3d0d0a; --red-border: #6a1a15;
+  --blue: #58a6ff; --blue-dim: #0d2a4a; --blue-border: #1a4a7a;
+  --purple: #bc8cff; --purple-dim: #2d1a4a;
+  --text: #e6edf3; --muted: #7d8590; --dim: #484f58;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Noto Sans KR', sans-serif; font-size: 14px; min-height: 100vh; }
+
+/* ─── Header ─────────────────────────────────────────────────── */
+header {
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 52px;
+  display: flex; align-items: center; gap: 12px;
+  position: sticky; top: 0;
+  background: rgba(13,17,23,0.96);
+  backdrop-filter: blur(8px);
+  z-index: 200;
+}
+.logo { width: 30px; height: 30px; background: linear-gradient(135deg,#3fb950,#2d8a45); border-radius: 7px; display:flex;align-items:center;justify-content:center; font-size:15px; }
+header h1 { font-size: 15px; font-weight: 600; letter-spacing: -.3px; }
+.server-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); margin-left: auto; transition: background .3s; }
+.server-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.server-label { font-size: 11px; color: var(--muted); }
+
+/* ─── Nav ────────────────────────────────────────────────────── */
+nav {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+  background: var(--surface);
+  overflow-x: auto;
+}
+.nav-item {
+  padding: 12px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+  display: flex; align-items: center; gap: 6px;
+}
+.nav-item:hover { color: var(--text); }
+.nav-item.active { color: var(--text); border-bottom-color: var(--green); }
+.nav-badge {
+  background: var(--red); color: #fff;
+  border-radius: 10px; padding: 1px 6px;
+  font-size: 10px; font-weight: 700;
+  display: none;
+}
+.nav-badge.show { display: inline-block; }
+
+/* ─── Content ────────────────────────────────────────────────── */
+.container { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* ─── Section title ──────────────────────────────────────────── */
+.sec-title {
+  font-size: 11px; font-weight: 500; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .8px;
+  margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.sec-title::after { content:''; flex:1; height:1px; background:var(--border); }
+
+/* ─── Cards ──────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.card-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.card-head h3 { font-size: 13px; font-weight: 500; }
+.card-body { padding: 16px; }
+
+/* ─── Upload zone ────────────────────────────────────────────── */
+.upload-zone {
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
+  padding: 32px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+  position: relative;
+}
+.upload-zone:hover, .upload-zone.drag-over { border-color: var(--green); background: rgba(63,185,80,.04); }
+.upload-zone.has-file { border-color: var(--green); border-style: solid; }
+.upload-zone input[type=file] { position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%; }
+.upload-icon { font-size: 32px; margin-bottom: 8px; }
+.upload-label { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+.upload-hint { font-size: 12px; color: var(--muted); }
+
+/* ─── Stat grid ──────────────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 20px; }
+@media(max-width:600px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
+.stat-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; text-align: center;
+}
+.stat-card.green { border-color: var(--green-border); background: rgba(63,185,80,.05); }
+.stat-card.yellow { border-color: var(--yellow-border); background: rgba(210,153,34,.05); }
+.stat-card.red { border-color: var(--red-border); background: rgba(248,81,73,.05); }
+.stat-card.blue { border-color: var(--blue-border); background: rgba(88,166,255,.05); }
+.stat-val { font-size: 28px; font-weight: 700; font-family:'DM Mono',monospace; line-height:1; margin-bottom:4px; }
+.stat-card.green .stat-val { color: var(--green); }
+.stat-card.yellow .stat-val { color: var(--yellow); }
+.stat-card.red .stat-val { color: var(--red); }
+.stat-card.blue .stat-val { color: var(--blue); }
+.stat-lbl { font-size: 11px; color: var(--muted); }
+
+/* ─── Table ──────────────────────────────────────────────────── */
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th {
+  padding: 9px 12px; text-align: left;
+  font-size: 10px; font-weight: 500; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .5px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg); white-space: nowrap;
+}
+td { padding: 10px 12px; border-bottom: 1px solid var(--border2); white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface2); }
+
+/* ─── Badges ─────────────────────────────────────────────────── */
+.badge {
+  display: inline-block; border-radius: 4px; padding: 2px 8px;
+  font-size: 11px; font-weight: 500; font-family:'Noto Sans KR',sans-serif;
+}
+.badge-ok { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-border); }
+.badge-pending { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow-border); }
+.badge-mismatch { background: var(--red-dim); color: var(--red); border: 1px solid var(--red-border); }
+.badge-card { background: var(--blue-dim); color: var(--blue); border: 1px solid var(--blue-border); }
+.badge-transfer { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-border); }
+.tag-nick { background: var(--blue-dim); color: var(--blue); border:1px solid var(--blue-border); border-radius:4px; padding:2px 8px; font-size:12px; font-family:'DM Mono',monospace; display:inline-block; }
+.tag-real { background: var(--green-dim); color: var(--green); border:1px solid var(--green-border); border-radius:4px; padding:2px 8px; font-size:12px; font-family:'DM Mono',monospace; display:inline-block; }
+
+/* ─── Buttons ────────────────────────────────────────────────── */
+.btn {
+  padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer;
+  font-family: 'Noto Sans KR', sans-serif; font-size: 13px; font-weight: 500;
+  transition: all .15s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.btn-primary { background: var(--green); color: #000; }
+.btn-primary:hover { background: #4ac95e; }
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--border); }
+.btn-blue { background: var(--blue); color: #000; }
+.btn-blue:hover { background: #79bbff; }
+.btn-danger { background: none; color: var(--red); border: 1px solid transparent; padding: 4px 8px; font-size: 12px; }
+.btn-danger:hover { background: var(--red-dim); border-color: var(--red); }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-row.right { justify-content: flex-end; margin-top: 16px; }
+
+/* ─── Form ───────────────────────────────────────────────────── */
+.form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: flex-end; }
+.form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
+.form-group label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+input[type=text], input[type=date], select {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 8px 12px;
+  font-family: 'Noto Sans KR', sans-serif; font-size: 13px; width: 100%;
+}
+input:focus, select:focus { outline: none; border-color: var(--green); }
+input::placeholder { color: var(--dim); }
+
+/* ─── Alert ──────────────────────────────────────────────────── */
+.alert { border-radius: 8px; padding: 12px 16px; font-size: 13px; margin-bottom: 16px; display: flex; gap: 10px; align-items: flex-start; }
+.alert-warn { background: var(--yellow-dim); border: 1px solid var(--yellow-border); color: var(--yellow); }
+.alert-info { background: var(--blue-dim); border: 1px solid var(--blue-border); color: var(--blue); }
+.alert-ok { background: var(--green-dim); border: 1px solid var(--green-border); color: var(--green); }
+
+/* ─── Session timeline ───────────────────────────────────────── */
+.session-item {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; margin-bottom: 10px;
+  display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+}
+.session-item:hover { border-color: var(--green-border); }
+.session-name { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+.session-meta { font-size: 12px; color: var(--muted); font-family: 'DM Mono', monospace; }
+.session-prog { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.prog-bar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; max-width: 200px; }
+.prog-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width .4s; }
+.prog-label { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; }
+
+/* ─── Spinner ────────────────────────────────────────────────── */
+.spinner { width:14px;height:14px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite;display:inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Toast ──────────────────────────────────────────────────── */
+.toast-wrap { position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px; }
+.toast {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; font-size: 13px; max-width: 280px;
+  animation: slideIn .2s ease; display: flex; align-items: center; gap: 8px;
+}
+.toast.ok { border-color: var(--green-border); }
+.toast.err { border-color: var(--red-border); }
+@keyframes slideIn { from{transform:translateX(20px);opacity:0} to{transform:translateX(0);opacity:1} }
+
+/* ─── Empty state ────────────────────────────────────────────── */
+.empty { text-align: center; padding: 40px 20px; color: var(--muted); }
+.empty .empty-icon { font-size: 36px; margin-bottom: 10px; }
+.empty p { font-size: 13px; }
+
+/* ─── 7일 타임라인 ───────────────────────────────────────────── */
+.timeline-wrap {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px; margin-bottom: 16px;
+}
+.timeline-title {
+  font-size: 13px; font-weight: 500; margin-bottom: 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.timeline-row {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+}
+.tl-day {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.tl-date {
+  font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace;
+  text-align: center;
+}
+.tl-dot {
+  width: 100%; height: 48px; border-radius: 8px;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; font-size: 18px; position: relative;
+  transition: all .2s; cursor: default;
+}
+.tl-dot.future {
+  background: var(--surface2); border: 1px dashed var(--border);
+}
+.tl-dot.today {
+  background: var(--blue-dim); border: 1px solid var(--blue-border);
+  animation: pulse 2s infinite;
+}
+.tl-dot.done-ok {
+  background: var(--green-dim); border: 1px solid var(--green-border);
+}
+.tl-dot.done-err {
+  background: var(--red-dim); border: 1px solid var(--red-border);
+}
+.tl-dot.missed {
+  background: var(--yellow-dim); border: 1px solid var(--yellow-border);
+}
+.tl-label {
+  font-size: 10px; text-align: center; line-height: 1.3;
+  font-family: 'DM Mono', monospace;
+}
+.tl-label.ok { color: var(--green); }
+.tl-label.err { color: var(--red); }
+.tl-label.today { color: var(--blue); }
+.tl-label.future { color: var(--dim); }
+.tl-label.missed { color: var(--yellow); }
+.tl-connector {
+  height: 2px; background: var(--border); margin: 0 -3px;
+  position: relative; top: -33px; z-index: 0;
+  grid-column: 1 / -1;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(88,166,255,0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(88,166,255,0); }
+}
+.setup-block {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 12px; overflow: hidden;
+  transition: border-color .2s;
+}
+.setup-block.done { border-color: var(--green-border); }
+.setup-header {
+  padding: 16px 20px; display: flex; align-items: center; gap: 14px;
+}
+.setup-circle {
+  width: 32px; height: 32px; min-width: 32px;
+  border-radius: 50%; background: var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; font-family: 'DM Mono', monospace;
+  transition: background .2s, color .2s;
+}
+.setup-block.done .setup-circle { background: var(--green); color: #000; }
+.setup-title { font-size: 14px; font-weight: 600; }
+.setup-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.setup-check { margin-left: auto; font-size: 12px; color: var(--green); font-weight: 500; }
+.setup-body {
+  padding: 0 20px 20px 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+/* copy card */
+.copy-card {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px;
+}
+.copy-label { font-size: 11px; color: var(--muted); margin-bottom: 8px; font-weight: 500; }
+.copy-row { display: flex; align-items: center; gap: 8px; }
+.copy-val {
+  flex: 1; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 7px 10px;
+  font-family: 'DM Mono', monospace; font-size: 12px;
+  color: var(--green); word-break: break-all;
+}
+.copy-btn {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 6px 12px;
+  font-size: 12px; color: var(--text); cursor: pointer;
+  white-space: nowrap; transition: all .15s; font-family: 'Noto Sans KR', sans-serif;
+}
+.copy-btn:hover { background: var(--green); color: #000; border-color: var(--green); }
+.copy-btn.copied { background: var(--green-dim); color: var(--green); border-color: var(--green-border); }
+code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'DM Mono', monospace; font-size: 12px; }</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">🌿</div>
+  <h1>지양하월시아 입금확인</h1>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+    <span class="server-label" id="serverLabel">서버 확인 중...</span>
+    <div class="server-dot" id="serverDot"></div>
+  </div>
+</header>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-item active" onclick="showPage('auto')" id="nav-auto">
+    🤖 결제 및 입금완료
+    <span class="nav-badge" id="badge-auto"></span>
+  </div>
+  <div class="nav-item" onclick="showPage('delivery')" id="nav-delivery">
+    📦 배송관리
+  </div>
+  <div class="nav-item" onclick="showPage('mapping')" id="nav-mapping">
+    🔗 닉네임 매핑
+  </div>
+  <div class="nav-item" onclick="showPage('manual')" id="nav-manual">
+    📋 수동입금 확인 (엑셀)
+  </div>
+  <div class="nav-item" onclick="showPage('guide')" id="nav-guide">
+    ⚙️ 초기설정
+  </div>
+</nav>
+
+<div class="container">
+
+<!-- ══════════════════════════════════════════════════════════════
+     PAGE: 결제 및 입금완료 (자동)
+══════════════════════════════════════════════════════════════ -->
+<div class="page active" id="page-auto">
+
+  <!-- 거래명세표 업로드 -->
+  <div class="sec-title">거래명세표 등록</div>
+  <div class="card">
+    <div class="card-body">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:end;flex-wrap:wrap;">
+        <div>
+          <div class="upload-zone" id="autoUploadZone">
+            <input type="file" id="autoFileInput" accept=".xlsx,.xls" onchange="handleAutoUpload(this.files)">
+            <div class="upload-icon">📋</div>
+            <div class="upload-label">거래명세표 엑셀 업로드</div>
+            <div class="upload-hint">클릭하거나 파일을 여기에 드래그하세요 · .xlsx .xls</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="form-group">
+            <label>라이브 방송 날짜</label>
+            <input type="date" id="liveDateInput">
+          </div>
+          <button class="btn btn-primary" id="uploadBtn" onclick="submitUpload()">
+            <span id="uploadBtnIcon">⬆️</span> 등록 및 확인 시작
+          </button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:10px;">
+        📌 등록하면 <strong style="color:var(--text)">방송일 +1일부터 7일간</strong> 30분마다 아임웹 카드결제 + SMS 입금을 자동 확인합니다.
+      </div>
+    </div>
+  </div>
+
+  <!-- 7일 자동확인 타임라인 -->
+  <div class="timeline-wrap" id="timelineWrap" style="display:none;">
+    <div class="timeline-title">
+      <span>📅 7일 자동확인 진행현황</span>
+      <span style="font-size:11px;color:var(--muted);">30분마다 자동 실행</span>
+    </div>
+    <div class="timeline-row" id="timelineRow"></div>
+    <div style="display:flex;gap:16px;margin-top:12px;font-size:11px;color:var(--muted);flex-wrap:wrap;">
+      <span>🟢 정상완료</span>
+      <span>🔴 오류발생</span>
+      <span>🟡 미실행</span>
+      <span>🔵 오늘(대기중)</span>
+      <span>⬜ 예정</span>
+    </div>
+  </div>
+
+  <!-- 세션 선택 + 새로고침 -->
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+    <select id="autoSessionFilter" onchange="loadAutoPage()" style="flex:1;padding:8px 12px;">
+      <option value="">전체 세션</option>
+    </select>
+    <button class="btn btn-secondary" onclick="loadAutoPage()">🔄 새로고침</button>
+    <button class="btn btn-primary" id="checkNowBtn" onclick="runCheckNow()">✅ 지금 확인 실행</button>
+  </div>
+
+  <!-- 통계 -->
+  <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+    <div class="stat-card blue" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
+      <div class="stat-val" id="auto-total">-</div><div class="stat-lbl">전체 주문자</div></div>
+    <div class="stat-card yellow" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
+      <div class="stat-val" id="auto-pending">-</div><div class="stat-lbl">⏳ 미확인 대기 🔍</div></div>
+    <div class="stat-card yellow" onclick="switchInnerTab('candidates')" style="cursor:pointer;background:rgba(255,165,0,0.08);" title="클릭: 의심가는 후보 보기">
+      <div class="stat-val" id="auto-candidates">-</div><div class="stat-lbl">🤔 의심가는 후보 🔍</div></div>
+    <div class="stat-card green" onclick="switchInnerTab('confirmed')" style="cursor:pointer;" title="클릭: 입금확인 보기">
+      <div class="stat-val" id="auto-confirmed">-</div><div class="stat-lbl">✅ 입금확인 🔍</div></div>
+  </div>
+
+  <!-- 탭 -->
+  <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;">
+    <div class="inner-tab active" id="tab-pending" onclick="switchInnerTab('pending')" style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid var(--yellow);color:var(--yellow);">
+      ⏳ 미확인 대기 <span id="pending-count-badge" class="nav-badge show" style="background:var(--yellow);"></span>
+    </div>
+    <div class="inner-tab" id="tab-candidates" onclick="switchInnerTab('candidates')" style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+      🤔 의심가는 후보 <span id="candidates-count-badge" class="nav-badge" style="background:#f59e0b;"></span>
+    </div>
+    <div class="inner-tab" id="tab-confirmed" onclick="switchInnerTab('confirmed')" style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+      ✅ 입금확인
+    </div>
+  </div>
+
+  <!-- 미확인 대기 리스트 -->
+  <div id="inner-pending">
+    <div class="card">
+      <div class="card-head">
+        <h3>⏳ 입금 대기 중인 구매자</h3>
+        <div class="btn-row">
+          <div style="font-size:12px;color:var(--muted);">SMS 또는 카드결제 확인 시 자동으로 입금확인으로 이동됩니다</div>
+          <button class="btn btn-primary" onclick="bulkAutoConfirm()" id="bulkAutoConfirmBtn">✅ 수동 입금확인</button>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th style="width:36px;"><input type="checkbox" id="autoCheckAll" onchange="toggleAutoAllCheck(this)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"></th>
+            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>라이브날짜</th>
+          </tr></thead>
+          <tbody id="pendingTbody">
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 의심가는 후보 리스트 -->
+  <div id="inner-candidates" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>🤔 의심가는 후보 (이름이 100% 일치하지 않거나 금액만 일치)</h3>
+        <div style="font-size:12px;color:var(--muted);">[✅ 확인] 누르면 입금확인 처리. [❌ 거절]은 후보만 닫음.</div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>출처</th><th>받은 이름</th><th>입금금액</th><th style="text-align:center;">→</th>
+            <th>추정 구매자</th><th>주문 합계</th><th>근거</th><th style="width:160px;">확인</th>
+          </tr></thead>
+          <tbody id="candidatesTbody">
+            <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">의심후보 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 입금확인 리스트 -->
+  <div id="inner-confirmed" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>✅ 입금확인 완료</h3>
+        <button class="btn btn-blue" onclick="downloadDeliveryExcel()">⬇ 엑셀 다운로드</button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>결제방법</th><th>확인일시</th>
+          </tr></thead>
+          <tbody id="confirmedTbody">
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PAGE: 배송관리
+══════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-delivery">
+
+  <!-- 통계 -->
+  <div class="stat-grid">
+    <div class="stat-card blue" onclick="filterDelivery('all')" style="cursor:pointer;" title="클릭: 전체 보기">
+      <div class="stat-val" id="ds-total">-</div><div class="stat-lbl">전체 입금확인</div></div>
+    <div class="stat-card green" onclick="filterDelivery('card')" style="cursor:pointer;" title="클릭: 카드결제만">
+      <div class="stat-val" id="ds-card">-</div><div class="stat-lbl">카드결제 🔍</div></div>
+    <div class="stat-card green" onclick="filterDelivery('transfer')" style="cursor:pointer;" title="클릭: 계좌이체만">
+      <div class="stat-val" id="ds-transfer">-</div><div class="stat-lbl">계좌이체 🔍</div></div>
+    <div class="stat-card yellow" onclick="filterDelivery('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
+      <div class="stat-val" id="ds-pending">-</div><div class="stat-lbl">미확인 대기 🔍</div></div>
+  </div>
+
+  <!-- 세션 필터 -->
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+    <select id="sessionFilter" onchange="loadDelivery()" style="flex:1;padding:8px 12px;">
+      <option value="">전체 세션</option>
+    </select>
+    <button class="btn btn-secondary" onclick="loadDelivery()">🔄 새로고침</button>
+    <button class="btn btn-blue" onclick="downloadDeliveryExcel()">⬇ 엑셀 다운로드</button>
+  </div>
+
+  <!-- 탭 -->
+  <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;">
+    <div id="dtab-confirmed" onclick="switchDeliveryTab('confirmed')"
+         style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid var(--green);color:var(--green);">
+      ✅ 입금확인
+    </div>
+    <div id="dtab-pending" onclick="switchDeliveryTab('pending')"
+         style="padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+      ⏳ 미확인 대기
+    </div>
+  </div>
+
+  <!-- 입금확인 목록 -->
+  <div id="delivery-confirmed">
+    <div class="card">
+      <div class="card-head"><h3>✅ 입금확인 완료 목록</h3></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>구매자</th><th>상품</th><th>금액</th><th>결제방법</th><th>확인일시</th><th>라이브날짜</th><th></th>
+          </tr></thead>
+          <tbody id="deliveryTbody">
+            <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 미확인 대기 목록 -->
+  <div id="delivery-pending" style="display:none;">
+    <div class="alert alert-warn">
+      ⚠️ 전화번호로 주문한 경우 자동 매칭이 어렵습니다. 입금 확인 후 체크 후 일괄 처리하세요.
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h3>⏳ 미확인 대기 목록</h3>
+        <button class="btn btn-primary" onclick="bulkManualConfirm()" id="bulkConfirmBtn">
+          ✅ 수동 입금확인
+        </button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th style="width:40px;"><input type="checkbox" id="checkAll" onchange="toggleAllCheck(this)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green);"></th>
+            <th>구매자</th><th>상품</th><th>금액</th><th>라이브날짜</th>
+          </tr></thead>
+          <tbody id="pendingDeliveryTbody">
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PAGE: 닉네임 매핑
+══════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-mapping">
+
+  <div class="alert alert-info">
+    💡 구매자가 닉네임으로 주문하고 다른 이름으로 입금하는 경우 여기에 등록하세요.<br>
+    한 번 등록하면 이후 라이브에도 자동 적용됩니다.
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3>🔗 매핑 추가</h3></div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>닉네임 (거래명세표에 적힌 이름)</label>
+          <input type="text" id="mapNick" placeholder="예: 자운영">
+        </div>
+        <div class="form-group">
+          <label>입금자명 (실제 이체 시 이름)</label>
+          <input type="text" id="mapReal" placeholder="예: 김자운">
+        </div>
+        <button class="btn btn-primary" onclick="addMapping()" style="align-self:flex-end;">+ 추가</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-title">등록된 매핑</div>
+  <div class="card">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>닉네임</th><th>입금자명</th><th></th>
+        </tr></thead>
+        <tbody id="mappingTbody">
+          <tr><td colspan="3" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PAGE: 수동입금 확인 (엑셀)
+══════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-manual">
+
+  <div class="alert alert-info">
+    💡 서버 없이 브라우저에서만 동작하는 수동 대조 도구입니다. 거래명세표와 은행 엑셀을 직접 업로드해서 확인하세요.
+  </div>
+
+  <!-- Step 1: 파일 업로드 -->
+  <div class="sec-title">파일 업로드</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+    <div class="upload-zone" id="mInvZone">
+      <input type="file" id="mInvInput" accept=".xlsx,.xls" multiple onchange="handleMInvoices(this.files)">
+      <div class="upload-icon">📋</div>
+      <div class="upload-label">거래명세표 (여러 개 가능)</div>
+      <div class="upload-hint">.xlsx .xls</div>
+      <div id="mInvList" style="margin-top:8px;"></div>
+    </div>
+    <div class="upload-zone" id="mBankZone">
+      <input type="file" id="mBankInput" accept=".xlsx,.xls" onchange="handleMBank(this.files)">
+      <div class="upload-icon">🏦</div>
+      <div class="upload-label">은행 입금내역</div>
+      <div class="upload-hint">.xlsx .xls</div>
+      <div id="mBankList" style="margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>📅 라이브 종료 시각 (이후 입금만 대조)</label>
+          <input type="datetime-local" id="mLiveEnd" style="background:var(--bg);">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="btn-row right" style="margin-bottom:20px;">
+    <button class="btn btn-primary" onclick="runManualCheck()">✅ 대조 실행</button>
+  </div>
+
+  <div id="manualResults"></div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PAGE: 초기 설정 가이드
+══════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-guide">
+
+  <!-- 서버 상태 배너 -->
+  <div id="guideBanner" class="alert alert-warn" style="margin-bottom:20px;">
+    ⚙️ 서버 상태 확인 중...
+  </div>
+
+  <!-- ── STEP 1: Python 설치 ────────────────────────────────── -->
+  <div class="setup-block" id="setup1">
+    <div class="setup-header">
+      <div class="setup-circle" id="c1">1</div>
+      <div>
+        <div class="setup-title">Python 설치</div>
+        <div class="setup-sub">컴퓨터에 한 번만 하면 됩니다</div>
+      </div>
+      <div class="setup-check" id="ck1" style="display:none;">✅ 완료</div>
+    </div>
+    <div class="setup-body">
+      <a href="https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe"
+         class="btn btn-blue" style="display:inline-flex;text-decoration:none;" target="_blank">
+        ⬇ Python 다운로드 (클릭)
+      </a>
+      <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.9;">
+        설치할 때 <strong style="color:var(--yellow)">꼭!</strong>
+        아래 체크박스를 선택하세요:<br>
+        ☑ <strong>"Add Python to PATH"</strong> (하단에 있음)
+      </div>
+    </div>
+  </div>
+
+  <!-- ── STEP 2: 서버 시작 ─────────────────────────────────── -->
+  <div class="setup-block" id="setup2">
+    <div class="setup-header">
+      <div class="setup-circle" id="c2">2</div>
+      <div>
+        <div class="setup-title">서버 시작</div>
+        <div class="setup-sub">항상 켜두는 컴퓨터에서 실행</div>
+      </div>
+      <div class="setup-check" id="ck2" style="display:none;">✅ 연결됨</div>
+    </div>
+    <div class="setup-body">
+      <div style="font-size:13px;line-height:2;">
+        1. 받은 파일 중 <code>지양하월시아_서버</code> 폴더를<br>
+        &nbsp;&nbsp;&nbsp;원하는 위치에 저장 (예: 바탕화면)<br>
+        2. 폴더 안의 <strong style="color:var(--green);">서버시작.bat</strong> 더블클릭<br>
+        3. 검은 창이 뜨고 <code>서버 시작!</code> 글자 보이면 완료
+      </div>
+      <div class="alert alert-info" style="margin-top:12px;font-size:12px;">
+        💡 검은 창(서버)은 닫지 마세요. 최소화만 해두세요.
+      </div>
+      <button class="btn btn-secondary" onclick="checkServer(true)" style="margin-top:10px;">
+        🔄 연결 확인
+      </button>
+    </div>
+  </div>
+
+  <!-- ── STEP 3: MacroDroid ────────────────────────────────── -->
+  <div class="setup-block" id="setup3">
+    <div class="setup-header">
+      <div class="setup-circle" id="c3">3</div>
+      <div>
+        <div class="setup-title">📱 MacroDroid 설정</div>
+        <div class="setup-sub">입금 문자 → 서버 자동 전송</div>
+      </div>
+    </div>
+    <div class="setup-body">
+
+      <!-- 서버 미연결 시 -->
+      <div id="macroOffline" class="alert alert-warn" style="font-size:13px;">
+        ⚠️ 먼저 2단계(서버 시작)를 완료하면 아래 값들이 자동으로 채워집니다.
+      </div>
+
+      <!-- 서버 연결 시 -->
+      <div id="macroOnline" style="display:none;">
+
+        <div style="font-size:13px;margin-bottom:16px;color:var(--muted);">
+          구글 플레이에서 <strong style="color:var(--text);">MacroDroid</strong> 설치 후, 아래 순서대로 진행하세요.
+        </div>
+
+        <!-- 매크로 설정값 카드들 -->
+        <div style="display:flex;flex-direction:column;gap:10px;">
+
+          <div class="copy-card">
+            <div class="copy-label">① 앱에서: 매크로 추가 → 이름 입력</div>
+            <div class="copy-row">
+              <div class="copy-val" id="cv-name">입금알림전송</div>
+              <button class="copy-btn" onclick="copyVal('cv-name')">복사</button>
+            </div>
+          </div>
+
+          <div class="copy-card">
+            <div class="copy-label">② 트리거 → SMS 수신 → 내용 필터</div>
+            <div class="copy-row">
+              <div class="copy-val" id="cv-filter">입금</div>
+              <button class="copy-btn" onclick="copyVal('cv-filter')">복사</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px;">
+              (농협, 국민 두 개 만들어도 되고, 하나로 해도 됩니다)
+            </div>
+          </div>
+
+          <div class="copy-card">
+            <div class="copy-label">③ 액션 → HTTP 요청 → URL 붙여넣기</div>
+            <div class="copy-row">
+              <div class="copy-val" id="cv-url" style="font-size:11px;word-break:break-all;">로딩 중...</div>
+              <button class="copy-btn" onclick="copyVal('cv-url')">복사</button>
+            </div>
+          </div>
+
+          <div class="copy-card">
+            <div class="copy-label">④ 방법(Method)</div>
+            <div class="copy-row">
+              <div class="copy-val" id="cv-method">POST</div>
+              <button class="copy-btn" onclick="copyVal('cv-method')">복사</button>
+            </div>
+          </div>
+
+          <div class="copy-card">
+            <div class="copy-label">⑤ 헤더 → 추가: Key / Value</div>
+            <div class="copy-row" style="margin-bottom:6px;">
+              <div class="copy-val" id="cv-hk">Content-Type</div>
+              <button class="copy-btn" onclick="copyVal('cv-hk')">복사</button>
+            </div>
+            <div class="copy-row">
+              <div class="copy-val" id="cv-hv">application/json</div>
+              <button class="copy-btn" onclick="copyVal('cv-hv')">복사</button>
+            </div>
+          </div>
+
+          <div class="copy-card">
+            <div class="copy-label">⑥ 바디(Body) → 아래 전체 복사 후 붙여넣기</div>
+            <div class="copy-row">
+              <div class="copy-val" id="cv-body" style="font-size:11px;">{"body": "[%SMSBODY%]", "sender": "[%SMSNAME%]", "time": "[%SMSTIME%]"}</div>
+              <button class="copy-btn" onclick="copyVal('cv-body')">복사</button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 테스트 -->
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+          <div style="font-size:13px;font-weight:500;margin-bottom:8px;">설정 완료 후 → 테스트</div>
+          <button class="btn btn-primary" onclick="testSms()">📩 테스트 입금 전송</button>
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;">
+            버튼을 누르면 가짜 입금 데이터를 서버에 전송해서 정상 작동하는지 확인합니다.
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- SMS 수신 로그 -->
+  <div class="card" style="margin-top:8px;">
+    <div class="card-head">
+      <h3>📩 입금 문자 수신 내역</h3>
+      <button class="btn btn-secondary" style="font-size:12px;" onclick="loadSmsLog()">🔄 새로고침</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>수신 시각</th><th>이름</th><th>금액</th><th>매칭 상태</th>
+        </tr></thead>
+        <tbody id="smsTbody">
+          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px;">수신된 문자 없음</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+</div><!-- /container -->
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  Config
+// ══════════════════════════════════════════════════════════════════
+const API = '';
+
+// ══════════════════════════════════════════════════════════════════
+//  Nav
+// ══════════════════════════════════════════════════════════════════
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  document.getElementById('nav-' + id).classList.add('active');
+
+  if (id === 'auto')     { loadAutoPage(); loadAutoSessionFilter(); }
+  if (id === 'delivery') { loadDelivery(); loadSessionFilter(); }
+  if (id === 'mapping')  loadMappings();
+  if (id === 'guide')    { updateGuideBanner(document.getElementById('serverDot').classList.contains('on')); loadSmsLog(); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Server status check
+// ══════════════════════════════════════════════════════════════════
+async function checkServer(showToast) {
+  try {
+    const r = await fetch(API + '/api/status', {signal: AbortSignal.timeout(3000)});
+    if (r.ok) {
+      document.getElementById('serverDot').classList.add('on');
+      document.getElementById('serverLabel').textContent = '서버 연결됨';
+      if (showToast) { toast('✅ 서버 연결 확인됨', 'ok'); updateGuideBanner(true); }
+      return true;
+    }
+  } catch(e) {}
+  document.getElementById('serverDot').classList.remove('on');
+  document.getElementById('serverLabel').textContent = '서버 연결 안됨';
+  if (showToast) toast('❌ 서버에 연결할 수 없습니다. 서버시작.bat을 실행해주세요.', 'err');
+  return false;
+}
+
+async function loadStatus() {
+  try {
+    const r = await fetch(API + '/api/status');
+    if (!r.ok) return;
+    const d = await r.json();
+    // Update pending badge
+    if (d.pending > 0) {
+      document.getElementById('badge-auto').textContent = d.pending;
+      document.getElementById('badge-auto').classList.add('show');
+    } else {
+      document.getElementById('badge-auto').classList.remove('show');
+    }
+  } catch(e) {}
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  결제 및 입금완료 (자동)
+// ══════════════════════════════════════════════════════════════════
+document.getElementById('liveDateInput').valueAsDate = new Date();
+
+function extractLiveDateFromFilename(name) {
+  if (!name) return null;
+  let m = name.match(/(20\d{2})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = name.match(/(20\d{2})(\d{2})(\d{2})/);
+  if (m) {
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    if (!isNaN(d.getTime())) return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  return null;
+}
+
+function handleAutoUpload(files) {
+  const f = files[0];
+  if (!f) return;
+  const zone = document.getElementById('autoUploadZone');
+  zone.querySelector('.upload-label').textContent = f.name;
+  zone.querySelector('.upload-hint').textContent = `${(f.size/1024).toFixed(1)} KB`;
+  zone.classList.add('has-file');
+  // 파일명에서 라이브 방송 날짜 자동 추출 → 입력칸 덮어쓰기
+  const detected = extractLiveDateFromFilename(f.name);
+  if (detected) {
+    document.getElementById('liveDateInput').value = detected;
+    toast(`📅 라이브 방송 날짜 자동 인식: ${detected}`, 'ok');
+  }
+}
+
+async function submitUpload() {
+  const input = document.getElementById('autoFileInput');
+  const dateVal = document.getElementById('liveDateInput').value;
+  if (!input.files[0]) { toast('거래명세표 파일을 선택하세요', 'err'); return; }
+  if (!dateVal) { toast('라이브 날짜를 선택하세요', 'err'); return; }
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 업로드 중...';
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  fd.append('live_date', dateVal);
+  try {
+    const r = await fetch(API + '/api/session/upload', {method:'POST', body:fd});
+    const d = await r.json();
+    if (d.ok) {
+      toast(`✅ 등록 완료! ${d.orders_count}명 · ${d.check_start}~${d.check_end} 자동확인 시작`, 'ok');
+      loadAutoPage(); loadAutoSessionFilter();
+    } else { toast('오류: ' + (d.error || '알 수 없는 오류'), 'err'); }
+  } catch(e) { toast('서버에 연결할 수 없습니다', 'err'); }
+  finally { btn.disabled = false; btn.innerHTML = '⬆️ 등록 및 확인 시작'; }
+}
+
+async function loadAutoSessionFilter() {
+  try {
+    const r = await fetch(API + '/api/sessions');
+    const sessions = await r.json();
+    const sel = document.getElementById('autoSessionFilter');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">전체 세션</option>' +
+      sessions.map(s => `<option value="${s.id}">${s.live_date} · ${s.filename}</option>`).join('');
+    sel.value = cur;
+  } catch(e) {}
+}
+
+async function loadAutoPage() {
+  const sid = document.getElementById('autoSessionFilter').value;
+  const qs = sid ? '?session_id=' + sid : '';
+  try {
+    const [pendingRes, confirmedRes, sessionsRes, candRes] = await Promise.all([
+      fetch(API + '/api/orders/pending' + qs),
+      fetch(API + '/api/orders/confirmed' + qs),
+      fetch(API + '/api/sessions'),
+      fetch(API + '/api/candidates' + qs)
+    ]);
+    const pending    = await pendingRes.json();
+    const confirmed  = await confirmedRes.json();
+    const sessions   = await sessionsRes.json();
+    const candidates = await candRes.json();
+
+    renderPending(pending);
+    renderConfirmed(confirmed);
+    renderCandidates(candidates);
+    document.getElementById('auto-total').textContent = pending.length + confirmed.length;
+    document.getElementById('auto-pending').textContent = pending.length;
+    document.getElementById('auto-confirmed').textContent = confirmed.length;
+    document.getElementById('auto-candidates').textContent = candidates.length;
+    document.getElementById('pending-count-badge').textContent = pending.length;
+    const candBadge = document.getElementById('candidates-count-badge');
+    if (candidates.length > 0) { candBadge.textContent = candidates.length; candBadge.classList.add('show'); }
+    else { candBadge.classList.remove('show'); candBadge.textContent = ''; }
+    if (pending.length > 0) {
+      document.getElementById('badge-auto').textContent = pending.length;
+      document.getElementById('badge-auto').classList.add('show');
+    } else { document.getElementById('badge-auto').classList.remove('show'); }
+
+    // 타임라인: 세션 데이터로 직접 렌더링
+    const targetId = sid ? parseInt(sid) : null;
+    const session = targetId ? sessions.find(s => s.id === targetId) : sessions[0];
+    if (session) renderTimeline(session);
+    else document.getElementById('timelineWrap').style.display = 'none';
+
+  } catch(e) {
+    document.getElementById('pendingTbody').innerHTML =
+      '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">서버 연결 안됨</td></tr>';
+  }
+}
+
+function renderTimeline(session) {
+  const wrap = document.getElementById('timelineWrap');
+  const row  = document.getElementById('timelineRow');
+  const weekdays = ['일','월','화','수','목','금','토'];
+
+  const checkStart = new Date(session.check_start + 'T00:00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(checkStart); d.setDate(d.getDate() + i); d.setHours(0,0,0,0);
+    const wd = weekdays[d.getDay()];
+    const md = `${d.getMonth()+1}/${d.getDate()}`;
+    let status = d < today ? 'past' : d.getTime()===today.getTime() ? 'today' : 'future';
+    days.push({ d, wd, md, status, dateStr: d.toISOString().slice(0,10) });
+  }
+
+  // 먼저 날짜만 표시
+  renderTimelineDays(row, days, {}, weekdays);
+  wrap.style.display = 'block';
+
+  // 로그 데이터 fetch 후 업데이트
+  fetch(API + '/api/check/logs?session_id=' + session.id)
+    .then(r => r.json())
+    .then(data => {
+      const logMap = {};
+      if (data.days) data.days.forEach(dl => { if (dl.log) logMap[dl.date] = dl.log; });
+      renderTimelineDays(row, days, logMap);
+    }).catch(() => {});
+}
+
+function renderTimelineDays(row, days, logMap) {
+  const weekdays = ['일','월','화','수','목','금','토'];
+  row.innerHTML = days.map(({ d, wd, md, status, dateStr }) => {
+    const log = logMap[dateStr];
+    let dotClass, emoji, label, labelClass;
+
+    if (status === 'future') {
+      dotClass='future'; emoji='⬜'; label='예정'; labelClass='future';
+    } else if (log) {
+      const hasErr = log.imweb_status==='error'||log.sms_status==='error';
+      const t = (log.imweb_confirmed||0)+(log.sms_confirmed||0);
+      if (hasErr) { dotClass='done-err'; emoji='🔴'; label=`오류\n${(log.check_time||'').slice(0,5)}`; labelClass='err'; }
+      else { dotClass='done-ok'; emoji='🟢'; label=`완료 ${t}건\n${(log.check_time||'').slice(0,5)}`; labelClass='ok'; }
+    } else if (status === 'today') {
+      dotClass='today'; emoji='🔵'; label='오늘\n대기중'; labelClass='today';
+    } else {
+      dotClass='missed'; emoji='🟡'; label='미실행'; labelClass='missed';
+    }
+
+    return `<div class="tl-day">
+      <div class="tl-date">${wd}<br>${md}</div>
+      <div class="tl-dot ${dotClass}" style="font-size:18px;line-height:48px;">${emoji}</div>
+      <div class="tl-label ${labelClass}" style="white-space:pre;font-size:10px;text-align:center;margin-top:4px;">${label}</div>
+    </div>`;
+  }).join('');
+}
+
+
+function renderPending(items) {
+  const tbody = document.getElementById('pendingTbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--green);padding:30px;">🎉 모두 입금확인 완료!</td></tr>';
+    return;
+  }
+  const totalAmt = items.reduce((s, i) => s + Number(i.total_amount), 0);
+  tbody.innerHTML = items.map(i => `
+    <tr data-session="${i.session_id}" data-buyer="${i.buyer_name.replace(/"/g,'&quot;')}">
+      <td style="text-align:center;"><input type="checkbox" class="auto-pending-check" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"></td>
+      <td><strong>${i.buyer_name}</strong></td>
+      <td style="font-size:11px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.live_date||'-'}</td>
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td colspan="3" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--yellow);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td></td>
+    </tr>`;
+}
+
+function renderConfirmed(items) {
+  const tbody = document.getElementById('confirmedTbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>';
+    return;
+  }
+  const totalAmt = items.reduce((s, i) => s + Number(i.total_amount), 0);
+  const payLabel = {card:'카드결제', transfer:'계좌이체', manual:'수동확인', '':'-'};
+  tbody.innerHTML = items.map(i => `
+    <tr>
+      <td><strong>${i.buyer_name}</strong></td>
+      <td style="font-size:11px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
+      <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.confirmed_at?i.confirmed_at.slice(0,16).replace('T',' '):'-'}</td>
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td colspan="2"></td>
+    </tr>`;
+}
+
+function switchInnerTab(tab) {
+  const states = {
+    pending:    { id: 'inner-pending',    tabId: 'tab-pending',    color: 'var(--yellow)' },
+    candidates: { id: 'inner-candidates', tabId: 'tab-candidates', color: '#f59e0b' },
+    confirmed:  { id: 'inner-confirmed',  tabId: 'tab-confirmed',  color: 'var(--green)' },
+  };
+  Object.entries(states).forEach(([key, s]) => {
+    const active = (key === tab);
+    document.getElementById(s.id).style.display = active ? 'block' : 'none';
+    document.getElementById(s.tabId).style.cssText =
+      `padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;` +
+      `border-bottom:2px solid ${active ? s.color : 'transparent'};` +
+      `color:${active ? s.color : 'var(--muted)'};`;
+  });
+  if (tab === 'candidates') loadCandidates();
+}
+
+async function loadCandidates() {
+  const sid = document.getElementById('autoSessionFilter').value;
+  const qs  = sid ? '?session_id=' + sid : '';
+  try {
+    const r = await fetch(API + '/api/candidates' + qs);
+    const list = await r.json();
+    renderCandidates(list);
+    document.getElementById('auto-candidates').textContent = list.length;
+    const badge = document.getElementById('candidates-count-badge');
+    if (list.length > 0) { badge.textContent = list.length; badge.classList.add('show'); }
+    else { badge.classList.remove('show'); badge.textContent = ''; }
+  } catch (e) {
+    document.getElementById('candidatesTbody').innerHTML =
+      '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px;">서버 연결 안됨</td></tr>';
+  }
+}
+
+function renderCandidates(list) {
+  const tb = document.getElementById('candidatesTbody');
+  if (!list || list.length === 0) {
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">의심후보 없음</td></tr>';
+    return;
+  }
+  const confBadge = (c) => {
+    const map = { high: ['#16a34a','높음'], medium: ['#f59e0b','중간'], low: ['#ef4444','낮음'] };
+    const [bg, lbl] = map[c] || ['#999', c || '-'];
+    return `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;background:${bg};color:#fff;margin-right:4px;">${lbl}</span>`;
+  };
+  const srcBadge = (s) => {
+    if (s === 'imweb') return '<span style="padding:2px 6px;border-radius:4px;font-size:11px;background:#3b82f6;color:#fff;">아임웹</span>';
+    if (s === 'sms')   return '<span style="padding:2px 6px;border-radius:4px;font-size:11px;background:#8b5cf6;color:#fff;">SMS</span>';
+    return s || '-';
+  };
+  const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString() + '원');
+  tb.innerHTML = list.map(c => {
+    const paid  = c.paid_name || '-';
+    const paid2 = c.paid_name2 ? ` <span style="color:var(--muted);font-size:11px;">(${c.paid_name2})</span>` : '';
+    const buyer = c.candidate_buyer_name || '<span style="color:var(--muted);">미정</span>';
+    const approveDisabled = c.candidate_buyer_name ? '' : 'disabled title="추정 주문이 없어 승인 불가"';
+    return `
+      <tr>
+        <td>${srcBadge(c.source)}</td>
+        <td><strong>${paid}</strong>${paid2}</td>
+        <td style="font-family:'DM Mono',monospace;">${fmt(c.amount)}</td>
+        <td style="text-align:center;color:var(--muted);">→</td>
+        <td>${buyer}</td>
+        <td style="font-family:'DM Mono',monospace;">${fmt(c.candidate_amount)}</td>
+        <td style="font-size:12px;color:var(--muted);">${confBadge(c.confidence)}${c.reason || ''}</td>
+        <td>
+          <button class="btn btn-primary" style="padding:4px 10px;font-size:12px;" onclick="approveCandidate(${c.id})" ${approveDisabled}>✅ 확인</button>
+          <button class="btn" style="padding:4px 10px;font-size:12px;background:#444;color:#fff;" onclick="rejectCandidate(${c.id})">❌ 거절</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+async function approveCandidate(id) {
+  if (!confirm('이 후보를 입금확인으로 처리하시겠습니까?')) return;
+  try {
+    const r = await fetch(API + '/api/candidates/' + id + '/approve',
+                          {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    if (d.ok) { toast(`✅ ${d.buyer_name} 입금확인 처리 완료`, 'ok'); loadAutoPage(); }
+    else { toast('오류: ' + (d.error || '실패'), 'err'); }
+  } catch (e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function rejectCandidate(id) {
+  if (!confirm('이 후보를 거절하시겠습니까?')) return;
+  try {
+    const r = await fetch(API + '/api/candidates/' + id + '/reject', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) { toast('거절됨', 'ok'); loadCandidates(); loadStatus(); }
+  } catch (e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function runCheckNow() {
+  const btn = document.getElementById('checkNowBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 확인 중...';
+  try {
+    const r = await fetch(API + '/api/check/run', {method:'POST'});
+    const d = await r.json();
+    toast('✅ ' + d.message, 'ok');
+    loadAutoPage();
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+  finally { btn.disabled = false; btn.innerHTML = '✅ 지금 확인 실행'; }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  배송관리
+// ══════════════════════════════════════════════════════════════════
+async function loadSessionFilter() {
+  try {
+    const r = await fetch(API + '/api/sessions');
+    const sessions = await r.json();
+    const sel = document.getElementById('sessionFilter');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">전체 세션</option>' +
+      sessions.map(s => `<option value="${s.id}">${s.live_date} · ${s.filename}</option>`).join('');
+    sel.value = cur;
+  } catch(e) {}
+}
+
+// 배송관리 전역 데이터
+let _deliveryConfirmed = [];
+let _deliveryPending = [];
+
+async function loadDelivery() {
+  const sid = document.getElementById('sessionFilter').value;
+  const qs = sid ? '?session_id=' + sid : '';
+
+  // 입금확인 목록
+  try {
+    const r = await fetch(API + '/api/delivery' + qs);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _deliveryConfirmed = await r.json();
+    renderDeliveryConfirmed(_deliveryConfirmed);
+    document.getElementById('ds-total').textContent = _deliveryConfirmed.length;
+    document.getElementById('ds-card').textContent = _deliveryConfirmed.filter(i => i.pay_type === 'card').length;
+    document.getElementById('ds-transfer').textContent = _deliveryConfirmed.filter(i => i.pay_type === 'transfer' || i.pay_type === 'manual').length;
+  } catch(e) {
+    _deliveryConfirmed = [];
+    document.getElementById('deliveryTbody').innerHTML =
+      '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">입금확인된 주문 없음</td></tr>';
+    document.getElementById('ds-total').textContent = '0';
+    document.getElementById('ds-card').textContent = '0';
+    document.getElementById('ds-transfer').textContent = '0';
+  }
+
+  // 미확인 대기 목록
+  try {
+    const r2 = await fetch(API + '/api/orders/pending' + qs);
+    if (!r2.ok) throw new Error('HTTP ' + r2.status);
+    _deliveryPending = await r2.json();
+    renderDeliveryPending(_deliveryPending);
+    document.getElementById('ds-pending').textContent = _deliveryPending.length;
+  } catch(e) {
+    _deliveryPending = [];
+    document.getElementById('pendingDeliveryTbody').innerHTML =
+      '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">미확인 대기 없음</td></tr>';
+    document.getElementById('ds-pending').textContent = '0';
+  }
+}
+
+// 배송관리 통계카드 클릭 필터
+function filterDelivery(type) {
+  // 탭 전환
+  if (type === 'pending') {
+    switchDeliveryTab('pending');
+    return;
+  }
+  switchDeliveryTab('confirmed');
+  let filtered = _deliveryConfirmed;
+  if (type === 'card')     filtered = _deliveryConfirmed.filter(i => i.pay_type === 'card');
+  if (type === 'transfer') filtered = _deliveryConfirmed.filter(i => i.pay_type === 'transfer' || i.pay_type === 'manual');
+  renderDeliveryConfirmed(filtered);
+}
+
+
+function renderDeliveryConfirmed(items) {
+  const tbody = document.getElementById('deliveryTbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문이 없습니다</td></tr>';
+    return;
+  }
+  const totalAmt = items.reduce((s, i) => s + Number(i.amount), 0);
+  const payLabel = {card:'카드결제', transfer:'계좌이체', manual:'수동확인', '':'-'};
+  const payClass = {card:'badge-card', transfer:'badge-transfer', manual:'badge-ok', '':'badge-ok'};
+  tbody.innerHTML = items.map(i => `
+    <tr>
+      <td><strong>${i.buyer_name}</strong></td>
+      <td style="font-size:11px;color:var(--muted);">${i.item || '-'}</td>
+      <td style="font-family:'DM Mono',monospace;">${Number(i.amount).toLocaleString()}원</td>
+      <td><span class="badge ${payClass[i.pay_type]||'badge-ok'}">${payLabel[i.pay_type]||i.pay_type||'-'}</span></td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.confirmed_at ? i.confirmed_at.slice(0,16).replace('T',' ') : '-'}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.live_date || '-'}</td>
+      <td><button class="btn btn-danger" style="font-size:11px;padding:3px 8px;" onclick="unconfirmOrder(${i.id})">취소</button></td>
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td colspan="4"></td>
+    </tr>`;
+}
+
+function renderDeliveryPending(items) {
+  const tbody = document.getElementById('pendingDeliveryTbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--green);padding:30px;">🎉 미확인 주문 없음!</td></tr>';
+    return;
+  }
+  const totalAmt = items.reduce((s, i) => s + Number(i.total_amount), 0);
+  tbody.innerHTML = items.map(i => `
+    <tr data-session="${i.session_id}" data-buyer="${i.buyer_name.replace(/"/g,'&quot;')}">
+      <td style="text-align:center;">
+        <input type="checkbox" class="pending-check"
+          style="width:16px;height:16px;cursor:pointer;accent-color:var(--green);">
+      </td>
+      <td><strong>${i.buyer_name}</strong></td>
+      <td style="font-size:11px;color:var(--muted);max-width:250px;white-space:normal;">${i.items || '-'}</td>
+      <td style="font-family:'DM Mono',monospace;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;">${i.live_date || '-'}</td>
+    </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+      <td></td>
+      <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--yellow);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+      <td></td>
+    </tr>`;
+}
+
+function toggleAllCheck(masterCb) {
+  document.querySelectorAll('.pending-check').forEach(cb => cb.checked = masterCb.checked);
+}
+
+function toggleAutoAllCheck(masterCb) {
+  document.querySelectorAll('.auto-pending-check').forEach(cb => cb.checked = masterCb.checked);
+}
+
+async function bulkAutoConfirm() {
+  const checked = document.querySelectorAll('.auto-pending-check:checked');
+  if (!checked.length) { toast('확인할 구매자를 먼저 체크하세요', 'err'); return; }
+  const targets = Array.from(checked).map(cb => {
+    const row = cb.closest('tr');
+    return { session_id: parseInt(row.dataset.session), buyer_name: row.dataset.buyer };
+  });
+  if (!confirm(`선택한 ${targets.length}명을 수동 입금확인 처리하시겠습니까?`)) return;
+  const btn = document.getElementById('bulkAutoConfirmBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 처리 중...';
+  let ok = 0;
+  for (const t of targets) {
+    try {
+      const r = await fetch(API + '/api/orders/confirm-by-buyer', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(t)
+      });
+      const d = await r.json();
+      if (d.ok) ok++;
+    } catch(e) {}
+  }
+  btn.disabled = false; btn.innerHTML = '✅ 수동 입금확인';
+  toast(`✅ ${ok}명 수동 입금확인 완료`, 'ok');
+  document.getElementById('autoCheckAll').checked = false;
+  await loadAutoPage();
+  switchInnerTab('confirmed');
+}
+
+async function bulkManualConfirm() {
+  const checked = document.querySelectorAll('.pending-check:checked');
+  if (!checked.length) { toast('확인할 구매자를 먼저 체크하세요', 'err'); return; }
+
+  const targets = Array.from(checked).map(cb => {
+    const row = cb.closest('tr');
+    return { session_id: parseInt(row.dataset.session), buyer_name: row.dataset.buyer };
+  });
+
+  if (!confirm(`선택한 ${targets.length}명을 수동 입금확인 처리하시겠습니까?`)) return;
+
+  const btn = document.getElementById('bulkConfirmBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 처리 중...';
+
+  let ok = 0;
+  for (const t of targets) {
+    try {
+      const r = await fetch(API + '/api/orders/confirm-by-buyer', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(t)
+      });
+      const d = await r.json();
+      if (d.ok) ok++;
+    } catch(e) {}
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '✅ 수동 입금확인';
+  toast(`✅ ${ok}명 수동 입금확인 완료`, 'ok');
+  document.getElementById('checkAll').checked = false;
+  await loadDelivery();
+  switchDeliveryTab('confirmed'); // 입금확인 탭으로 자동 전환
+}
+
+async function onPendingCheck() {} // deprecated
+
+async function unconfirmOrder(orderId) {
+  if (!confirm('입금확인을 취소하시겠습니까?')) return;
+  try {
+    await fetch(API + '/api/orders/' + orderId + '/unconfirm', {method: 'POST'});
+    toast('입금확인 취소됨', 'ok');
+    loadDelivery();
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+function switchDeliveryTab(tab) {
+  const isConf = tab === 'confirmed';
+  document.getElementById('delivery-confirmed').style.display = isConf ? 'block' : 'none';
+  document.getElementById('delivery-pending').style.display   = isConf ? 'none' : 'block';
+  document.getElementById('dtab-confirmed').style.cssText = `padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid ${isConf?'var(--green)':'transparent'};color:${isConf?'var(--green)':'var(--muted)'};`;
+  document.getElementById('dtab-pending').style.cssText   = `padding:10px 20px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:2px solid ${!isConf?'var(--yellow)':'transparent'};color:${!isConf?'var(--yellow)':'var(--muted)'};`;
+}
+
+async function downloadDeliveryExcel() {
+  const sid = document.getElementById('sessionFilter').value;
+  const url = API + '/api/delivery/excel' + (sid ? '?session_id=' + sid : '');
+  try {
+    const r = await fetch(url);
+    if (!r.ok) { toast('다운로드 실패', 'err'); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `배송목록_${new Date().toLocaleDateString('ko-KR').replace(/\. /g,'-').replace('.','')}`.replace(/\s/g,'') + '.xlsx';
+    a.click();
+    toast('⬇ 엑셀 다운로드 완료', 'ok');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  닉네임 매핑
+// ══════════════════════════════════════════════════════════════════
+async function loadMappings() {
+  try {
+    const r = await fetch(API + '/api/mappings');
+    const items = await r.json();
+    renderMappings(items);
+  } catch(e) {
+    document.getElementById('mappingTbody').innerHTML =
+      '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px;">서버 연결 안됨</td></tr>';
+  }
+}
+
+function renderMappings(items) {
+  const tbody = document.getElementById('mappingTbody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:24px;">등록된 매핑 없음</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map(m => {
+    const isNeg = (m.negative === 1 || m.negative === '1');
+    const badge = isNeg
+      ? '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;background:#ef4444;color:#fff;margin-left:6px;">동일인 아님</span>'
+      : '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;background:#16a34a;color:#fff;margin-left:6px;">동일인</span>';
+    const arrow = isNeg ? '✗' : '→';
+    return `
+      <tr style="${isNeg ? 'background:rgba(239,68,68,0.06);' : ''}">
+        <td><span class="tag-nick">${m.nickname}</span> ${badge}</td>
+        <td><span style="color:var(--muted);margin:0 8px;">${arrow}</span><span class="tag-real">${m.realname}</span></td>
+        <td><button class="btn btn-danger" onclick="deleteMapping('${m.nickname}')">삭제</button></td>
+      </tr>`;
+  }).join('');
+}
+
+async function addMapping() {
+  const nn = document.getElementById('mapNick').value.trim();
+  const rn = document.getElementById('mapReal').value.trim();
+  if (!nn || !rn) { toast('닉네임과 입금자명을 모두 입력하세요', 'err'); return; }
+  try {
+    await fetch(API + '/api/mappings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({nickname:nn,realname:rn})});
+    toast(`"${nn}" → "${rn}" 매핑 추가됨`, 'ok');
+    document.getElementById('mapNick').value = '';
+    document.getElementById('mapReal').value = '';
+    loadMappings();
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function deleteMapping(nn) {
+  try {
+    await fetch(API + '/api/mappings/' + encodeURIComponent(nn), {method:'DELETE'});
+    toast('매핑 삭제됨', 'ok');
+    loadMappings();
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  수동 확인 (엑셀)
+// ══════════════════════════════════════════════════════════════════
+let mInvoiceFiles = [], mBankFile = null;
+
+function handleMInvoices(files) {
+  mInvoiceFiles = Array.from(files).filter(f => f.name.match(/\.xlsx?$/i));
+  document.getElementById('mInvZone').classList.toggle('has-file', mInvoiceFiles.length > 0);
+  document.getElementById('mInvList').innerHTML = mInvoiceFiles.map(f =>
+    `<div style="font-size:11px;color:var(--green);margin-top:4px;">📋 ${f.name}</div>`).join('');
+}
+function handleMBank(files) {
+  mBankFile = Array.from(files).find(f => f.name.match(/\.xlsx?$/i));
+  if (mBankFile) {
+    document.getElementById('mBankZone').classList.add('has-file');
+    document.getElementById('mBankList').innerHTML = `<div style="font-size:11px;color:var(--green);margin-top:4px;">🏦 ${mBankFile.name}</div>`;
+  }
+}
+
+async function runManualCheck() {
+  if (!mInvoiceFiles.length) { toast('거래명세표 파일을 업로드하세요', 'err'); return; }
+  if (!mBankFile) { toast('입금내역 파일을 업로드하세요', 'err'); return; }
+
+  const afterVal = document.getElementById('mLiveEnd').value;
+  const afterDt = afterVal ? new Date(afterVal) : null;
+
+  const bankWb = await readWb(mBankFile);
+  const bankRows = XLSX.utils.sheet_to_json(bankWb.Sheets[bankWb.SheetNames[0]], {header:1, defval:''});
+  const bankEntries = parseBankRows(bankRows, afterDt);
+
+  let html = '';
+  for (const f of mInvoiceFiles) {
+    const wb = await readWb(f);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    const {entries, giftCol} = parseInvRows(rows);
+
+    let ok=0, mis=0, nf=0;
+    const entryHtml = entries.map(e => {
+      const names = [e.name];
+      let matched = null;
+      for (const n of names) {
+        const idx = bankEntries.findIndex(b => !b.used && (b.name===n || b.name.includes(n) || n.includes(b.name)));
+        if (idx >= 0) { matched = bankEntries[idx]; break; }
+      }
+      let status, cls;
+      if (!matched) { status='미확인'; cls='badge-mismatch'; nf++; }
+      else {
+        const diff = Math.abs(matched.amount - e.amount);
+        matched.used = true;
+        if (diff===0||diff===4000||diff<=100) { status='입금확인 ✓'; cls='badge-ok'; ok++; }
+        else { status=`금액불일치(입금:${matched.amount.toLocaleString()}원/주문:${e.amount.toLocaleString()}원)`; cls='badge-mismatch'; mis++; }
+      }
+      if (giftCol >= 0) {
+        const addr = XLSX.utils.encode_cell({r:e.rowIdx, c:giftCol});
+        if (!ws[addr]) ws[addr] = {};
+        ws[addr].v = status; ws[addr].t = 's';
+      }
+      return `<tr><td>${e.name}</td><td style="font-family:'DM Mono',monospace;">${e.amount.toLocaleString()}원</td><td><span class="badge ${cls}">${status}</span></td></tr>`;
+    }).join('');
+
+    html += `
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-head">
+          <h3>📋 ${f.name}</h3>
+          <div class="btn-row">
+            <span style="font-size:12px;color:var(--muted);">확인 ${ok} / 불일치 ${mis} / 미확인 ${nf}</span>
+            <button class="btn btn-blue" onclick="dlManual('${f.name}', ${mInvoiceFiles.indexOf(f)})">⬇ 다운로드</button>
+          </div>
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>구매자</th><th>금액</th><th>결과</th></tr></thead>
+          <tbody>${entryHtml}</tbody>
+        </table></div>
+      </div>`;
+  }
+  document.getElementById('manualResults').innerHTML = html;
+  window._manualWbs = mInvoiceFiles.map((f,i) => ({name:f.name, wb:null}));
+  toast('✅ 대조 완료', 'ok');
+}
+
+const _wbCache = {};
+async function readWb(file) {
+  return new Promise(res => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
+      res(wb);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function parseBankRows(rows, afterDt) {
+  let hi=-1, dc=-1, nc=-1, ac=-1;
+  for (let i=0; i<Math.min(10,rows.length); i++) {
+    const r = rows[i].map(c => String(c).toLowerCase().replace(/\s/g,''));
+    const d = r.findIndex(c => ['날짜','일자','거래일','date','시간','거래일시'].some(h=>c.includes(h)));
+    const n = r.findIndex(c => ['이름','입금자','보낸이','거래처','적요','입금인'].some(h=>c.includes(h)));
+    const a = r.findIndex(c => ['입금','금액','amount','입금액'].some(h=>c.includes(h)));
+    if (d>=0&&n>=0&&a>=0){hi=i;dc=d;nc=n;ac=a;break;}
+  }
+  if (hi<0) { dc=0;nc=1;ac=2;hi=0; }
+  const out = [];
+  for (let i=hi+1;i<rows.length;i++) {
+    const row=rows[i]; if(!row||row.every(c=>c==='')) continue;
+    const rawD=row[dc], rawN=String(row[nc]||'').trim(), rawA=row[ac];
+    const amt=parseFloat(String(rawA).replace(/[^0-9.-]/g,''));
+    if(!rawN||isNaN(amt)||amt<=0) continue;
+    let dt=null;
+    if(rawD instanceof Date) dt=rawD;
+    else if(typeof rawD==='number') dt=new Date((rawD-25569)*86400000);
+    else dt=new Date(String(rawD).replace(/\./g,'-'));
+    if(afterDt&&dt&&dt<afterDt) continue;
+    out.push({date:dt,name:rawN,amount:amt,used:false});
+  }
+  return out;
+}
+
+function parseInvRows(rows) {
+  let hi=-1,nc=-1,ac=-1,gc=-1;
+  for(let i=0;i<Math.min(15,rows.length);i++){
+    const r=rows[i].map(c=>String(c||'').trim());
+    const ni=r.findIndex(c=>['이름','구매자','닉네임','성함'].some(h=>c.includes(h)));
+    const ai=r.findIndex(c=>['금액','합계','가격','총액'].some(h=>c.includes(h)));
+    const gi=r.findIndex(c=>['선물함','비고','확인','상태'].some(h=>c.includes(h)));
+    if(ni>=0&&ai>=0){hi=i;nc=ni;ac=ai;gc=gi;break;}
+  }
+  if(hi<0) return {entries:[],giftCol:-1};
+  const entries=[];
+  for(let i=hi+1;i<rows.length;i++){
+    const row=rows[i]; if(!row||row.every(c=>c==='')) continue;
+    const name=String(row[nc]||'').trim();
+    const amt=parseFloat(String(row[ac]||'').replace(/[^0-9.-]/g,''));
+    if(!name||isNaN(amt)||amt<=0) continue;
+    entries.push({rowIdx:i,name,amount:amt,giftColIdx:gc});
+  }
+  return {entries,giftCol:gc};
+}
+
+function dlManual(fname, idx) {
+  const file = mInvoiceFiles[idx];
+  readWb(file).then(wb => {
+    XLSX.writeFile(wb, '확인완료_' + fname);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MacroDroid 가이드
+// ══════════════════════════════════════════════════════════════════
+async function updateWebhookUrl() {
+  try {
+    const r = await fetch(API + '/api/myip');
+    const d = await r.json();
+    document.getElementById('cv-url').textContent = d.sms_url;
+    document.getElementById('macroOnline').style.display = 'block';
+    document.getElementById('macroOffline').style.display = 'none';
+  } catch(e) {
+    document.getElementById('macroOnline').style.display = 'none';
+    document.getElementById('macroOffline').style.display = 'block';
+  }
+}
+
+function copyVal(id) {
+  const val = document.getElementById(id).textContent.trim();
+  navigator.clipboard.writeText(val).then(() => {
+    const btn = document.querySelector(`[onclick="copyVal('${id}')"]`);
+    const orig = btn.textContent;
+    btn.textContent = '✓ 복사됨';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+async function updateGuideBanner(serverOk) {
+  const banner = document.getElementById('guideBanner');
+  if (!banner) return;
+  if (serverOk) {
+    banner.className = 'alert alert-ok';
+    banner.textContent = '✅ 서버 연결됨 — 아래 설정값들이 자동으로 채워졌습니다.';
+    document.getElementById('setup1').classList.add('done');
+    document.getElementById('ck1').style.display = 'inline';
+    document.getElementById('setup2').classList.add('done');
+    document.getElementById('ck2').style.display = 'inline';
+    updateWebhookUrl();
+  } else {
+    banner.className = 'alert alert-warn';
+    banner.textContent = '⚠️ 서버가 꺼져 있습니다. 아래 순서대로 설정하세요.';
+  }
+}
+
+async function loadSmsLog() {
+  try {
+    const r = await fetch(API + '/api/sms/recent');
+    const items = await r.json();
+    const tbody = document.getElementById('smsTbody');
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px;">수신된 문자 없음</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(s => `
+      <tr>
+        <td style="font-family:'DM Mono',monospace;font-size:11px;">${(s.received_at||'').slice(0,16).replace('T',' ')}</td>
+        <td>${s.parsed_name || '<span style="color:var(--muted)">파싱실패</span>'}</td>
+        <td style="font-family:'DM Mono',monospace;">${s.parsed_amount ? Number(s.parsed_amount).toLocaleString()+'원' : '-'}</td>
+        <td><span class="badge ${s.matched?'badge-ok':'badge-pending'}">${s.matched?'✅ 매칭됨':'⏳ 대기중'}</span></td>
+      </tr>`).join('');
+  } catch(e) {
+    document.getElementById('smsTbody').innerHTML =
+      '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px;">서버 연결 안됨</td></tr>';
+  }
+}
+
+async function testSms() {
+  const testBody = 'NH농협은행 테스트 30,000원 입금 홍길동 잔액 1,234,567원';
+  try {
+    await fetch(API + '/sms', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({body: testBody, sender: '농협은행', time: new Date().toISOString()})
+    });
+    toast('📩 테스트 전송 완료! 아래 수신 내역에서 확인하세요.', 'ok');
+    setTimeout(loadSmsLog, 500);
+  } catch(e) {
+    toast('서버 연결 실패 — 서버시작.bat을 먼저 실행하세요', 'err');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Toast
+// ══════════════════════════════════════════════════════════════════
+function toast(msg, type='ok') {
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Init
+// ══════════════════════════════════════════════════════════════════
+(async () => {
+  const ok = await checkServer();
+  if (ok) {
+    loadAutoPage();
+    loadAutoSessionFilter();
+    setInterval(checkServer, 15000);
+    setInterval(loadAutoPage, 30000);
+  }
+})();
+</script>
+</body>
+</html>
