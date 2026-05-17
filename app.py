@@ -846,60 +846,79 @@ def upload_bank():
 # ══════════════════════════════════════════════════════════════════
 @app.route('/api/mappings/export', methods=['GET'])
 def export_mappings():
-    """닉네임 매핑 전체를 CSV로 다운로드"""
-    import csv
-    from io import StringIO
+    """닉네임 매핑 전체를 텍스트 파일로 다운로드.
+    양식:  nickname=realname     (동일인)
+           nickname≠realname     (동일인 아님)
+    """
     from flask import Response
     conn = get_conn()
     rows = conn.execute(
-        'SELECT nickname, realname, COALESCE(negative,0) as negative FROM nick_mappings ORDER BY nickname'
+        'SELECT nickname, realname, COALESCE(negative,0) as negative FROM nick_mappings ORDER BY negative, nickname'
     ).fetchall()
     conn.close()
-    buf = StringIO()
-    buf.write('﻿')  # UTF-8 BOM (Excel 호환)
-    w = csv.writer(buf)
-    w.writerow(['nickname', 'realname', 'negative'])
+    lines = []
     for r in rows:
-        w.writerow([r['nickname'], r['realname'], r['negative']])
-    fname = f'nick_mappings_{datetime.now().strftime("%Y%m%d_%H%M")}.csv'
-    return Response(buf.getvalue(),
-                    mimetype='text/csv; charset=utf-8',
+        sep = '≠' if r['negative'] == 1 else '='
+        lines.append(f"{r['nickname']}{sep}{r['realname']}")
+    text = '\n'.join(lines) + '\n'
+    fname = f'nick_mappings_{datetime.now().strftime("%Y%m%d_%H%M")}.txt'
+    return Response(text,
+                    mimetype='text/plain; charset=utf-8',
                     headers={'Content-Disposition': f'attachment; filename={fname}'})
 
 
 @app.route('/api/mappings/import', methods=['POST'])
 def import_mappings():
-    """CSV 업로드로 닉네임 매핑 일괄 추가 (기존 nickname과 충돌 시 덮어쓰기)"""
-    import csv
-    from io import StringIO
+    """텍스트 양식 업로드로 닉네임 매핑 일괄 추가.
+    한 줄당 한 매핑:
+        nickname=realname     → 동일인 (negative=0)
+        nickname≠realname  → 동일인 아님 (negative=1)
+        nickname!=realname    → 동일인 아님 (대체 표기)
+    빈 줄, # 으로 시작하는 줄은 무시.
+    같은 nickname이 이미 있으면 덮어쓰기.
+    """
     if 'file' not in request.files:
         return jsonify({'error': '파일이 없습니다'}), 400
     file = request.files['file']
     try:
         raw = file.read()
-        try:
-            text = raw.decode('utf-8-sig')
-        except UnicodeDecodeError:
-            text = raw.decode('cp949')
+        text = None
+        for enc in ('utf-8-sig', 'utf-8', 'cp949', 'euc-kr'):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            return jsonify({'error': '파일 인코딩 해석 실패'}), 400
     except Exception as e:
         return jsonify({'error': f'파일 읽기 오류: {e}'}), 400
 
     added = updated = skipped = 0
     conn = get_conn()
     try:
-        reader = csv.DictReader(StringIO(text))
-        # 컬럼 헤더 정규화
-        fieldnames = [(fn or '').strip().lower() for fn in (reader.fieldnames or [])]
-        # nickname/realname 컬럼이 있는지 확인
-        if 'nickname' not in fieldnames or 'realname' not in fieldnames:
-            return jsonify({'error': "CSV 첫 줄에 'nickname,realname,negative' 헤더가 필요합니다"}), 400
-        # DictReader는 원본 키로 접근하므로 fieldnames 수정 후 재 reader
-        reader = csv.DictReader(StringIO(text))
-        for row in reader:
-            nick = ((row.get('nickname') or row.get('Nickname') or '').strip())
-            real = ((row.get('realname') or row.get('Realname') or '').strip())
-            neg_raw = ((row.get('negative') or '0').strip().lower())
-            neg = 1 if neg_raw in ('1', 'true', 'y', 'yes') else 0
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                skipped += 1
+                continue
+            sep = None
+            neg = 0
+            if '≠' in line:
+                sep, neg = '≠', 1
+            elif '!=' in line:
+                sep, neg = '!=', 1
+            elif '=' in line:
+                sep, neg = '=', 0
+            if not sep:
+                skipped += 1
+                continue
+            parts = line.split(sep, 1)
+            if len(parts) != 2:
+                skipped += 1
+                continue
+            nick = parts[0].strip()
+            real = parts[1].strip()
             if not nick or not real:
                 skipped += 1
                 continue
@@ -917,7 +936,7 @@ def import_mappings():
         conn.commit()
     finally:
         conn.close()
-    logger.info(f"📤 매핑 import: 추가 {added}, 수정 {updated}, 스킵 {skipped}")
+    logger.info(f"📤 매핑 import (텍스트): 추가 {added}, 수정 {updated}, 스킵 {skipped}")
     return jsonify({'ok': True, 'added': added, 'updated': updated, 'skipped': skipped})
 
 
