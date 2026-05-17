@@ -193,6 +193,62 @@ input::placeholder { color: var(--dim); }
 .alert-info { background: var(--blue-dim); border: 1px solid var(--blue-border); color: var(--blue); }
 .alert-ok { background: var(--green-dim); border: 1px solid var(--green-border); color: var(--green); }
 
+/* ─── 구매자별 거래명세서 (PNG 캡처용) ────────────────────── */
+.invoice-card {
+  background:#fff; color:#000; border:1px solid #cfd8dc;
+  border-radius:8px; overflow:hidden; padding:0;
+  font-family:'맑은 고딕','Malgun Gothic',sans-serif;
+}
+.invoice-render {
+  padding:14px 16px 18px; background:#fff;
+}
+.invoice-title {
+  text-align:center; font-size:22px; font-weight:800;
+  padding:8px 0 10px; border-bottom:2px solid #2d3e50;
+  margin-bottom:8px; color:#1f2933;
+}
+.invoice-date-row {
+  display:flex; justify-content:flex-end; align-items:center;
+  font-size:13px; margin-bottom:6px; gap:8px;
+}
+.invoice-date-row .ymd {
+  background:#a9d08e; padding:3px 8px; border-radius:3px; color:#000; font-weight:600;
+}
+.invoice-table {
+  width:100%; border-collapse:collapse; font-size:13px;
+}
+.invoice-table th, .invoice-table td {
+  border:1px solid #b0b0b0; padding:5px 8px; text-align:center; color:#000;
+}
+.invoice-table th {
+  background:#e2efda; font-weight:600;
+}
+.invoice-table td.buyer-cell {
+  background:#e2efda; font-weight:500;
+}
+.invoice-table tr.total-row td {
+  background:#f5f5f5; color:#c00; font-weight:700; font-size:14px; padding:8px;
+}
+.invoice-footer {
+  margin-top:12px; padding:10px 8px; text-align:center;
+  font-size:12px; color:#222; line-height:1.55;
+  border-top:1px solid #cfd8dc;
+}
+.invoice-footer .thanks { font-weight:700; margin-bottom:6px; }
+.invoice-footer .small { font-size:11px; color:#555; }
+.invoice-card-head {
+  padding:8px 12px; background:#f5f7fa; border-bottom:1px solid #e0e0e0;
+  display:flex; justify-content:space-between; align-items:center;
+}
+.invoice-card-head .name { font-weight:700; font-size:14px; color:#1f2933; }
+.invoice-card-head .total { font-size:13px; color:#c00; font-weight:700; }
+.invoice-png-btn {
+  padding:4px 10px; font-size:12px; background:#3b82f6; color:#fff;
+  border:none; border-radius:4px; cursor:pointer;
+}
+.invoice-png-btn:hover { background:#2563eb; }
+.invoice-png-btn:disabled { opacity:0.5; cursor:not-allowed; }
+
 /* ─── Session timeline ───────────────────────────────────────── */
 .session-item {
   background: var(--surface); border: 1px solid var(--border);
@@ -333,6 +389,8 @@ input::placeholder { color: var(--dim); }
 .copy-btn:hover { background: var(--green); color: #000; border-color: var(--green); }
 .copy-btn.copied { background: var(--green-dim); color: var(--green); border-color: var(--green-border); }
 code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'DM Mono', monospace; font-size: 12px; }</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
@@ -358,12 +416,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="nav-item" onclick="showPage('mapping')" id="nav-mapping">
     🔗 닉네임 매핑
   </div>
-  <div class="nav-item" onclick="showPage('manual')" id="nav-manual">
-    📋 수동입금 확인 (엑셀)
-  </div>
-  <div class="nav-item" onclick="showPage('guide')" id="nav-guide">
-    ⚙️ 초기설정
-  </div>
+  <!-- 수동입금/초기설정 nav 제거됨 (v9) -->
 </nav>
 
 <div class="container">
@@ -415,8 +468,30 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
           <input type="file" id="bankInput" accept=".xls,.xlsx" onchange="handleBankUpload(this.files)">
         </div>
         <button class="btn btn-primary" onclick="submitBankUpload()" id="bankUploadBtn" style="align-self:flex-end;">⬆️ 은행 엑셀 업로드</button>
+        <button class="btn btn-blue" onclick="runManualCheckBank()" id="manualCheckBankBtn" style="align-self:flex-end;" title="업로드된 입금건들 재매칭 + 아임웹 카드결제 확인까지 한 번에">✓ 수동입금확인</button>
       </div>
       <div id="bankResult" style="margin-top:8px;font-size:13px;color:var(--muted);"></div>
+    </div>
+  </div>
+
+  <!-- 📷 구매자별 거래명세서 (PNG 자동 생성) -->
+  <div class="sec-title">📷 구매자별 거래명세서 PNG</div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-body">
+      <p style="color:var(--muted);font-size:13px;margin-bottom:10px;">
+        업로드된 거래명세표를 구매자별로 필터링해 캡처용 이미지로 만듭니다.
+        각 구매자 카드의 [📷 PNG 저장] 버튼을 누르거나, 우측 상단의 [📦 전체 ZIP] 버튼으로 전부 한꺼번에 받을 수 있어요.
+      </p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+        <select id="buyerInvoiceSession" onchange="loadBuyerInvoices()" style="flex:1;min-width:200px;padding:8px 12px;">
+          <option value="">세션 선택...</option>
+        </select>
+        <button class="btn btn-secondary" onclick="loadBuyerInvoices()">🔄 새로고침</button>
+        <button class="btn btn-blue" onclick="downloadAllBuyerPngs()" id="zipAllBtn">📦 전체 ZIP 다운로드</button>
+      </div>
+      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px;margin-top:12px;">
+        <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">세션을 선택하세요</div>
+      </div>
     </div>
   </div>
 
@@ -634,8 +709,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     <div class="card-head">
       <h3>🔗 매핑 추가</h3>
       <div class="btn-row">
-        <button class="btn btn-secondary" onclick="downloadMappings()" title="현재 매핑 전체를 CSV로 다운로드">⬇ 매핑 다운로드</button>
-        <button class="btn btn-secondary" onclick="document.getElementById('mapImportInput').click()" title="CSV로 매핑 일괄 업로드">⬆ 매핑 업로드</button>
+        <button class="btn btn-secondary" onclick="downloadMappings()" title="현재 매핑 전체를 텍스트(=, ≠)로 다운로드">⬇ 매핑 다운로드</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('mapImportInput').click()" title="텍스트(=, ≠)로 매핑 일괄 업로드">⬆ 매핑 업로드</button>
         <input type="file" id="mapImportInput" accept=".csv,.txt" style="display:none;" onchange="uploadMappings(this.files)">
       </div>
     </div>
@@ -690,227 +765,11 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════
-     PAGE: 수동입금 확인 (엑셀)
-══════════════════════════════════════════════════════════════ -->
-<div class="page" id="page-manual">
+<!-- page-manual 제거됨 -->
 
-  <div class="alert alert-info">
-    💡 서버 없이 브라우저에서만 동작하는 수동 대조 도구입니다. 거래명세표와 은행 엑셀을 직접 업로드해서 확인하세요.
-  </div>
 
-  <!-- Step 1: 파일 업로드 -->
-  <div class="sec-title">파일 업로드</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
-    <div class="upload-zone" id="mInvZone">
-      <input type="file" id="mInvInput" accept=".xlsx,.xls" multiple onchange="handleMInvoices(this.files)">
-      <div class="upload-icon">📋</div>
-      <div class="upload-label">거래명세표 (여러 개 가능)</div>
-      <div class="upload-hint">.xlsx .xls</div>
-      <div id="mInvList" style="margin-top:8px;"></div>
-    </div>
-    <div class="upload-zone" id="mBankZone">
-      <input type="file" id="mBankInput" accept=".xlsx,.xls" onchange="handleMBank(this.files)">
-      <div class="upload-icon">🏦</div>
-      <div class="upload-label">은행 입금내역</div>
-      <div class="upload-hint">.xlsx .xls</div>
-      <div id="mBankList" style="margin-top:8px;"></div>
-    </div>
-  </div>
+<!-- page-guide 제거됨 -->
 
-  <div class="card" style="margin-bottom:16px;">
-    <div class="card-body">
-      <div class="form-row">
-        <div class="form-group">
-          <label>📅 라이브 종료 시각 (이후 입금만 대조)</label>
-          <input type="datetime-local" id="mLiveEnd" style="background:var(--bg);">
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="btn-row right" style="margin-bottom:20px;">
-    <button class="btn btn-primary" onclick="runManualCheck()">✅ 대조 실행</button>
-  </div>
-
-  <div id="manualResults"></div>
-
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     PAGE: 초기 설정 가이드
-══════════════════════════════════════════════════════════════ -->
-<div class="page" id="page-guide">
-
-  <!-- 서버 상태 배너 -->
-  <div id="guideBanner" class="alert alert-warn" style="margin-bottom:20px;">
-    ⚙️ 서버 상태 확인 중...
-  </div>
-
-  <!-- ── STEP 1: Python 설치 ────────────────────────────────── -->
-  <div class="setup-block" id="setup1">
-    <div class="setup-header">
-      <div class="setup-circle" id="c1">1</div>
-      <div>
-        <div class="setup-title">Python 설치</div>
-        <div class="setup-sub">컴퓨터에 한 번만 하면 됩니다</div>
-      </div>
-      <div class="setup-check" id="ck1" style="display:none;">✅ 완료</div>
-    </div>
-    <div class="setup-body">
-      <a href="https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe"
-         class="btn btn-blue" style="display:inline-flex;text-decoration:none;" target="_blank">
-        ⬇ Python 다운로드 (클릭)
-      </a>
-      <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.9;">
-        설치할 때 <strong style="color:var(--yellow)">꼭!</strong>
-        아래 체크박스를 선택하세요:<br>
-        ☑ <strong>"Add Python to PATH"</strong> (하단에 있음)
-      </div>
-    </div>
-  </div>
-
-  <!-- ── STEP 2: 서버 시작 ─────────────────────────────────── -->
-  <div class="setup-block" id="setup2">
-    <div class="setup-header">
-      <div class="setup-circle" id="c2">2</div>
-      <div>
-        <div class="setup-title">서버 시작</div>
-        <div class="setup-sub">항상 켜두는 컴퓨터에서 실행</div>
-      </div>
-      <div class="setup-check" id="ck2" style="display:none;">✅ 연결됨</div>
-    </div>
-    <div class="setup-body">
-      <div style="font-size:13px;line-height:2;">
-        1. 받은 파일 중 <code>지양하월시아_서버</code> 폴더를<br>
-        &nbsp;&nbsp;&nbsp;원하는 위치에 저장 (예: 바탕화면)<br>
-        2. 폴더 안의 <strong style="color:var(--green);">서버시작.bat</strong> 더블클릭<br>
-        3. 검은 창이 뜨고 <code>서버 시작!</code> 글자 보이면 완료
-      </div>
-      <div class="alert alert-info" style="margin-top:12px;font-size:12px;">
-        💡 검은 창(서버)은 닫지 마세요. 최소화만 해두세요.
-      </div>
-      <button class="btn btn-secondary" onclick="checkServer(true)" style="margin-top:10px;">
-        🔄 연결 확인
-      </button>
-    </div>
-  </div>
-
-  <!-- ── STEP 3: MacroDroid ────────────────────────────────── -->
-  <div class="setup-block" id="setup3">
-    <div class="setup-header">
-      <div class="setup-circle" id="c3">3</div>
-      <div>
-        <div class="setup-title">📱 MacroDroid 설정</div>
-        <div class="setup-sub">입금 문자 → 서버 자동 전송</div>
-      </div>
-    </div>
-    <div class="setup-body">
-
-      <!-- 서버 미연결 시 -->
-      <div id="macroOffline" class="alert alert-warn" style="font-size:13px;">
-        ⚠️ 먼저 2단계(서버 시작)를 완료하면 아래 값들이 자동으로 채워집니다.
-      </div>
-
-      <!-- 서버 연결 시 -->
-      <div id="macroOnline" style="display:none;">
-
-        <div style="font-size:13px;margin-bottom:16px;color:var(--muted);">
-          구글 플레이에서 <strong style="color:var(--text);">MacroDroid</strong> 설치 후, 아래 순서대로 진행하세요.
-        </div>
-
-        <!-- 매크로 설정값 카드들 -->
-        <div style="display:flex;flex-direction:column;gap:10px;">
-
-          <div class="copy-card">
-            <div class="copy-label">① 앱에서: 매크로 추가 → 이름 입력</div>
-            <div class="copy-row">
-              <div class="copy-val" id="cv-name">입금알림전송</div>
-              <button class="copy-btn" onclick="copyVal('cv-name')">복사</button>
-            </div>
-          </div>
-
-          <div class="copy-card">
-            <div class="copy-label">② 트리거 → SMS 수신 → 내용 필터</div>
-            <div class="copy-row">
-              <div class="copy-val" id="cv-filter">입금</div>
-              <button class="copy-btn" onclick="copyVal('cv-filter')">복사</button>
-            </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:6px;">
-              (농협, 국민 두 개 만들어도 되고, 하나로 해도 됩니다)
-            </div>
-          </div>
-
-          <div class="copy-card">
-            <div class="copy-label">③ 액션 → HTTP 요청 → URL 붙여넣기</div>
-            <div class="copy-row">
-              <div class="copy-val" id="cv-url" style="font-size:11px;word-break:break-all;">로딩 중...</div>
-              <button class="copy-btn" onclick="copyVal('cv-url')">복사</button>
-            </div>
-          </div>
-
-          <div class="copy-card">
-            <div class="copy-label">④ 방법(Method)</div>
-            <div class="copy-row">
-              <div class="copy-val" id="cv-method">POST</div>
-              <button class="copy-btn" onclick="copyVal('cv-method')">복사</button>
-            </div>
-          </div>
-
-          <div class="copy-card">
-            <div class="copy-label">⑤ 헤더 → 추가: Key / Value</div>
-            <div class="copy-row" style="margin-bottom:6px;">
-              <div class="copy-val" id="cv-hk">Content-Type</div>
-              <button class="copy-btn" onclick="copyVal('cv-hk')">복사</button>
-            </div>
-            <div class="copy-row">
-              <div class="copy-val" id="cv-hv">application/json</div>
-              <button class="copy-btn" onclick="copyVal('cv-hv')">복사</button>
-            </div>
-          </div>
-
-          <div class="copy-card">
-            <div class="copy-label">⑥ 바디(Body) → 아래 전체 복사 후 붙여넣기</div>
-            <div class="copy-row">
-              <div class="copy-val" id="cv-body" style="font-size:11px;">{"body": "[%SMSBODY%]", "sender": "[%SMSNAME%]", "time": "[%SMSTIME%]"}</div>
-              <button class="copy-btn" onclick="copyVal('cv-body')">복사</button>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- 테스트 -->
-        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
-          <div style="font-size:13px;font-weight:500;margin-bottom:8px;">설정 완료 후 → 테스트</div>
-          <button class="btn btn-primary" onclick="testSms()">📩 테스트 입금 전송</button>
-          <div style="font-size:12px;color:var(--muted);margin-top:8px;">
-            버튼을 누르면 가짜 입금 데이터를 서버에 전송해서 정상 작동하는지 확인합니다.
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </div>
-
-  <!-- SMS 수신 로그 -->
-  <div class="card" style="margin-top:8px;">
-    <div class="card-head">
-      <h3>📩 입금 문자 수신 내역</h3>
-      <button class="btn btn-secondary" style="font-size:12px;" onclick="loadSmsLog()">🔄 새로고침</button>
-    </div>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr>
-          <th>수신 시각</th><th>이름</th><th>금액</th><th>매칭 상태</th>
-        </tr></thead>
-        <tbody id="smsTbody">
-          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px;">수신된 문자 없음</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-</div>
 
 </div><!-- /container -->
 
@@ -931,7 +790,7 @@ function showPage(id) {
   document.getElementById('page-' + id).classList.add('active');
   document.getElementById('nav-' + id).classList.add('active');
 
-  if (id === 'auto')     { loadAutoPage(); loadAutoSessionFilter(); }
+  if (id === 'auto')     { loadAutoPage(); loadAutoSessionFilter(); loadBuyerInvoiceSessions(); }
   if (id === 'delivery') { loadDelivery(); loadSessionFilter(); }
   if (id === 'mapping')  loadMappings();
   if (id === 'guide')    { updateGuideBanner(document.getElementById('serverDot').classList.contains('on')); loadSmsLog(); }
@@ -1556,6 +1415,213 @@ async function submitBankUpload() {
   }
 }
 
+async function runManualCheckBank() {
+  const btn = document.getElementById('manualCheckBankBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 확인 중...';
+  try {
+    const r = await fetch(API + '/api/check/run', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      toast('✅ ' + (d.message || '수동입금확인 완료'), 'ok');
+      loadAutoPage();
+    } else {
+      toast('오류: ' + (d.error || '실패'), 'err');
+    }
+  } catch(e) {
+    toast('서버 연결 실패', 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '✓ 수동입금확인';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  📷 구매자별 거래명세서 PNG 생성
+// ══════════════════════════════════════════════════════════════════
+let _buyerInvoiceData = null;
+
+async function loadBuyerInvoiceSessions() {
+  try {
+    const r = await fetch(API + '/api/sessions');
+    const sessions = await r.json();
+    const sel = document.getElementById('buyerInvoiceSession');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">세션 선택...</option>' +
+      sessions.map(s => `<option value="${s.id}">${s.live_date} · ${s.filename}</option>`).join('');
+    if (cur) sel.value = cur;
+    else if (sessions.length) {
+      sel.value = sessions[0].id;
+      loadBuyerInvoices();
+    }
+  } catch(e) {}
+}
+
+async function loadBuyerInvoices() {
+  const sid = document.getElementById('buyerInvoiceSession').value;
+  const container = document.getElementById('buyerInvoiceContainer');
+  if (!sid) {
+    container.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">세션을 선택하세요</div>';
+    return;
+  }
+  container.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">불러오는 중...</div>';
+  try {
+    const r = await fetch(API + '/api/sessions');
+    const sessions = await r.json();
+    const sess = sessions.find(s => s.id == sid);
+    if (!sess) { container.innerHTML = '<div style="grid-column:1/-1;color:var(--red);">세션 없음</div>'; return; }
+    _buyerInvoiceData = sess;
+
+    // 구매자별 그룹핑
+    const groups = {};
+    for (const o of (sess.orders || [])) {
+      if (!o.buyer_name) continue;
+      if (!groups[o.buyer_name]) groups[o.buyer_name] = [];
+      groups[o.buyer_name].push(o);
+    }
+    const buyers = Object.keys(groups).sort();
+    if (!buyers.length) {
+      container.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);">주문자 없음</div>';
+      return;
+    }
+    container.innerHTML = '';
+    buyers.forEach((b, idx) => {
+      const orders = groups[b];
+      const total = orders.reduce((s, o) => s + (o.amount || 0), 0);
+      const cardId = `inv-card-${idx}`;
+      const renderId = `inv-render-${idx}`;
+      const card = document.createElement('div');
+      card.className = 'invoice-card';
+      card.id = cardId;
+      card.innerHTML = `
+        <div class="invoice-card-head">
+          <span class="name">${b}</span>
+          <span class="total">총 ${total.toLocaleString()}원</span>
+          <button class="invoice-png-btn" onclick="downloadBuyerPng('${renderId}', '${b.replace(/['"\\]/g,'')}')">📷 PNG 저장</button>
+        </div>
+        <div class="invoice-render" id="${renderId}">
+          ${renderInvoiceHtml(sess, b, orders, total)}
+        </div>`;
+      container.appendChild(card);
+    });
+  } catch(e) {
+    container.innerHTML = `<div style="grid-column:1/-1;color:var(--red);">로딩 실패: ${e.message}</div>`;
+  }
+}
+
+function renderInvoiceHtml(sess, buyer, orders, total) {
+  const ymd = (sess.live_date || '').replace(/-/g,'');
+  const dt = sess.live_date ? new Date(sess.live_date) : new Date();
+  const dateText = `${dt.getFullYear()}년 ${String(dt.getMonth()+1).padStart(2,'0')}월 ${String(dt.getDate()).padStart(2,'0')}일`;
+  const rows = orders.map(o => `
+    <tr>
+      <td class="buyer-cell">${buyer}</td>
+      <td></td>
+      <td>${(o.item || '').replace(/</g,'&lt;')}</td>
+      <td>${(o.amount || 0).toLocaleString()}</td>
+      <td></td>
+    </tr>`).join('');
+  return `
+    <div class="invoice-title">지양하월시아 거래명세서</div>
+    <div class="invoice-date-row">
+      <span class="ymd">${ymd}</span>
+      <span>${dateText}</span>
+    </div>
+    <table class="invoice-table">
+      <thead>
+        <tr>
+          <th style="width:25%;">구매자</th>
+          <th style="width:10%;">번호</th>
+          <th style="width:35%;">하월시아 이름</th>
+          <th style="width:18%;">판매가격</th>
+          <th style="width:12%;">선물함</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+        <tr class="total-row">
+          <td colspan="3">총 합계</td>
+          <td>₩${total.toLocaleString()}</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="invoice-footer">
+      <div class="thanks">★ 구매해 주셔서 감사합니다</div>
+      <div>/</div>
+      <div>입금계좌 :  국민 971-3720-1874(영농조합법인 지양)</div>
+      <div>5만원이상 무료배송/미만은 4천원의 배송비가 있습니다.</div>
+      <div class="small" style="margin-top:6px;">
+        *라이브 특가는 할인을 많이 해드려, 서비스가 없는 점 양해 부탁드립니다.<br>
+        더욱 좋은 가격과 튼실한 하월시아로 보답드리겠습니다!
+      </div>
+    </div>`;
+}
+
+async function downloadBuyerPng(renderId, buyerName) {
+  const el = document.getElementById(renderId);
+  if (!el || typeof html2canvas !== 'function') {
+    toast('html2canvas 로드 실패', 'err');
+    return;
+  }
+  try {
+    const canvas = await html2canvas(el, {backgroundColor:'#ffffff', scale: 2});
+    const dataUrl = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `${buyerName}_거래명세서.png`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 100);
+    toast(`${buyerName} PNG 저장됨`, 'ok');
+  } catch(e) {
+    toast('PNG 생성 실패: ' + e.message, 'err');
+  }
+}
+
+async function downloadAllBuyerPngs() {
+  if (typeof JSZip !== 'function' || typeof html2canvas !== 'function') {
+    toast('필요한 라이브러리 로드 실패', 'err');
+    return;
+  }
+  const btn = document.getElementById('zipAllBtn');
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span> 생성 중...';
+  try {
+    const renders = document.querySelectorAll('#buyerInvoiceContainer .invoice-render');
+    if (!renders.length) { toast('생성할 명세서 없음', 'err'); return; }
+    const zip = new JSZip();
+    let done = 0;
+    for (const r of renders) {
+      const name = r.closest('.invoice-card').querySelector('.name').textContent;
+      btn.innerHTML = `<span class="spinner"></span> ${++done}/${renders.length}...`;
+      const canvas = await html2canvas(r, {backgroundColor:'#ffffff', scale: 2});
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      const safe = name.replace(/[\\/:*?"<>|]/g, '_');
+      zip.file(`${safe}_거래명세서.png`, blob);
+    }
+    btn.innerHTML = '<span class="spinner"></span> ZIP 압축 중...';
+    const ts = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    const sess = _buyerInvoiceData;
+    const live = sess ? sess.live_date.replace(/-/g,'') : ts;
+    const zipBlob = await zip.generateAsync({type:'blob'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(zipBlob);
+    a.download = `거래명세서_${live}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 100);
+    toast(`✅ ${renders.length}건 ZIP 다운로드 완료`, 'ok');
+  } catch(e) {
+    toast('ZIP 생성 실패: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
 async function downloadMappings() {
   try {
     const r = await fetch(API + '/api/mappings/export');
@@ -1565,11 +1631,11 @@ async function downloadMappings() {
     const a = document.createElement('a');
     a.href = url;
     const ts = new Date().toISOString().slice(0,10).replace(/-/g,'');
-    a.download = `nick_mappings_${ts}.csv`;
+    a.download = `nick_mappings_${ts}.txt`;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 100);
-    toast('CSV 다운로드 완료', 'ok');
+    toast('매핑 다운로드 완료', 'ok');
   } catch(e) { toast('다운로드 오류: ' + e.message, 'err'); }
 }
 
