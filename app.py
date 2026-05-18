@@ -210,9 +210,9 @@ def upload_session():
 
     for o in orders:
         conn.execute(
-            '''INSERT INTO orders (session_id, buyer_name, item, amount, pay_type, status)
-               VALUES (?, ?, ?, ?, ?, 'pending')''',
-            (session_id, o['name'], o['item'], o['amount'], o.get('pay_type', ''))
+            '''INSERT INTO orders (session_id, buyer_name, item, item_no, amount, pay_type, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending')''',
+            (session_id, o['name'], o.get('item', ''), o.get('item_no', ''), o['amount'], o.get('pay_type', ''))
         )
 
     conn.commit()
@@ -233,15 +233,23 @@ def upload_session():
 
 
 def parse_invoice_excel(ws):
-    """거래명세표 엑셀에서 구매자/금액 파싱"""
+    """거래명세표 엑셀에서 구매자/번호/이름/금액 파싱.
+    헤더 인식 키워드:
+      구매자: '구매자', '닉네임', '성함', '주문자'
+      번호:   '번호', '연번', 'No.', 'no.'
+      이름:   '하월시아', '품명', '상품', '품목', '내역', '식물', '제품'
+      금액:   '판매가격', '금액', '합계', '가격', '총액', '결제'
+    """
     rows = list(ws.values)
     orders = []
 
-    header_idx = name_col = amount_col = item_col = -1
+    header_idx = name_col = amount_col = item_col = itemno_col = -1
 
-    NAME_HINTS   = ['이름', '구매자', '닉네임', '성함']
-    AMOUNT_HINTS = ['금액', '합계', '가격', '총액', '결제']
-    ITEM_HINTS   = ['상품', '품목', '내역', '식물']
+    # '이름' 단독은 '하월시아 이름'에도 매치되므로 NAME_HINTS에 두지 않음
+    NAME_HINTS   = ['구매자', '닉네임', '성함', '주문자']
+    NUMBER_HINTS = ['번호', '연번', 'No.', 'no.']
+    ITEM_HINTS   = ['하월시아', '품명', '상품', '품목', '내역', '식물', '제품']
+    AMOUNT_HINTS = ['판매가격', '금액', '합계', '가격', '총액', '결제']
 
     for i, row in enumerate(rows[:15]):
         if not row:
@@ -254,6 +262,7 @@ def parse_invoice_excel(ws):
             name_col   = ni
             amount_col = ai
             item_col   = next((j for j, c in enumerate(cells) if any(h in c for h in ITEM_HINTS)), -1)
+            itemno_col = next((j for j, c in enumerate(cells) if any(h in c for h in NUMBER_HINTS)), -1)
             break
 
     if header_idx < 0:
@@ -271,13 +280,24 @@ def parse_invoice_excel(ws):
         except Exception:
             continue
         item = str(row[item_col] or '').strip() if item_col >= 0 and item_col < len(row) else ''
+        itemno = ''
+        if itemno_col >= 0 and itemno_col < len(row):
+            v = row[itemno_col]
+            if v is not None and str(v).strip():
+                try:
+                    if isinstance(v, (int, float)) and float(v).is_integer():
+                        itemno = str(int(v))
+                    else:
+                        itemno = str(v).strip()
+                except Exception:
+                    itemno = str(v).strip()
 
-        # 총합계/소계/합계 같은 요약행 스킵 (구매자가 아님)
+        # 총합계/소계/합계 같은 요약행 스킵
         clean = name.replace(' ', '').replace('\u00a0', '')
         if clean in {'총합계', '총계', '소계', '합계', '총합', '계', '총주문', '주문합계'}:
             continue
         if name and amt > 0:
-            orders.append({'name': name, 'item': item, 'amount': amt})
+            orders.append({'name': name, 'item': item, 'item_no': itemno, 'amount': amt})
 
     return orders
 
