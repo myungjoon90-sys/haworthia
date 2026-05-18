@@ -21,6 +21,7 @@ def init_db():
         session_id INTEGER,
         buyer_name TEXT,
         item TEXT,
+        item_no TEXT,
         amount INTEGER,
         pay_type TEXT,
         status TEXT DEFAULT 'pending',
@@ -28,6 +29,11 @@ def init_db():
         bank_date TEXT,
         FOREIGN KEY (session_id) REFERENCES live_sessions(id)
     )''')
+    # 기존 DB 마이그레이션 (item_no 컬럼 없으면 추가)
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN item_no TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS sms_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
