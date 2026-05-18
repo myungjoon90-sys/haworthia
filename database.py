@@ -93,6 +93,17 @@ def init_db():
         FOREIGN KEY (session_id) REFERENCES live_sessions(id)
     )''')
 
+    # 거래명세표 발송 진행상태 (식물보관 / 배송완료)
+    c.execute('''CREATE TABLE IF NOT EXISTS buyer_status (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER,
+        buyer_name TEXT,
+        status TEXT,
+        updated_at TEXT,
+        UNIQUE(session_id, buyer_name),
+        FOREIGN KEY (session_id) REFERENCES live_sessions(id)
+    )''')
+
     conn.commit()
     conn.close()
     print("✅ DB 초기화 완료")

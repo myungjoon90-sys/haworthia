@@ -188,3 +188,36 @@ def extract_order_info(iorder):
     item = ", ".join(p.get("prod_name", "") for p in prod_list) if prod_list else ""
 
     return {"name": name, "name2": name2, "amount": amount, "paid_at": paid_at, "item": item}
+
+
+
+def set_order_to_standby(order_no, prod_order_nos=None):
+    """아임웹 주문을 '상품 준비중' → '배송대기'로 전환.
+    PATCH /v2/shop/orders/{order_no}/place
+    body: {} 또는 {"prod_order_nos": [...]}
+    """
+    token = get_access_token()
+    if not token:
+        logger.warning(f"[imweb] 토큰 없음 → 배송대기 전환 스킵: {order_no}")
+        return False
+    url = f"https://api.imweb.me/v2/shop/orders/{order_no}/place"
+    body = {}
+    if prod_order_nos:
+        body['prod_order_nos'] = prod_order_nos if isinstance(prod_order_nos, list) else [prod_order_nos]
+    try:
+        resp = requests.patch(url, headers={"access-token": token, "Content-Type": "application/json"}, json=body, timeout=10)
+        data = resp.json() if resp.text else {}
+        if _is_token_error(data):
+            invalidate_token()
+            token = get_access_token(force_refresh=True)
+            if token:
+                resp = requests.patch(url, headers={"access-token": token, "Content-Type": "application/json"}, json=body, timeout=10)
+                data = resp.json() if resp.text else {}
+        if data.get('code') == 200:
+            logger.info(f"  🚚 아임웹 배송대기 전환 성공: {order_no}")
+            return True
+        logger.warning(f"  ⚠️ 아임웹 배송대기 전환 실패: {order_no} → {str(data)[:200]}")
+        return False
+    except Exception as e:
+        logger.error(f"  ❌ 아임웹 배송대기 전환 오류: {order_no} → {e}")
+        return False

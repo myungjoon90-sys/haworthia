@@ -11,7 +11,7 @@ import socket
 import re
 
 from database import init_db, get_conn
-from imweb_api import get_paid_orders, extract_order_info
+from imweb_api import get_paid_orders, extract_order_info, set_order_to_standby
 from sms_parser import parse_sms
 
 import sys
@@ -492,6 +492,126 @@ def delete_mapping(nickname):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  거래명세표 발송 진행상태 (식물보관 / 배송완료)
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/buyer/status', methods=['POST'])
+def set_buyer_status():
+    """구매자별 발송 상태 변경. body: {session_id, buyer_name, status}
+       status: 'stored' (식물보관) | 'shipped' (배송완료) | 'reset' (되돌리기/null)"""
+    data = request.get_json(silent=True) or {}
+    sid = data.get('session_id')
+    buyer = (data.get('buyer_name') or '').strip()
+    status = (data.get('status') or '').strip()
+    if not sid or not buyer:
+        return jsonify({'error': 'session_id, buyer_name 필요'}), 400
+    if status not in ('stored', 'shipped', 'reset'):
+        return jsonify({'error': "status는 'stored', 'shipped', 'reset' 중 하나"}), 400
+    conn = get_conn()
+    try:
+        if status == 'reset':
+            conn.execute("DELETE FROM buyer_status WHERE session_id=? AND buyer_name=?", (sid, buyer))
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO buyer_status (session_id, buyer_name, status, updated_at) VALUES (?,?,?,?)",
+                (sid, buyer, status, datetime.now().isoformat())
+            )
+        conn.commit()
+        logger.info(f"  📦 구매자 상태 변경: session={sid} '{buyer}' → {status}")
+        return jsonify({'ok': True})
+    finally:
+        conn.close()
+
+
+@app.route('/api/buyer/status/export', methods=['GET'])
+def export_buyer_status():
+    """식물 보관 + 배송완료 상태 전체를 CSV로 다운로드 (서버 초기화 대비)"""
+    import csv
+    from io import StringIO
+    from flask import Response
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT bs.session_id, bs.buyer_name, bs.status, bs.updated_at, ls.live_date, ls.filename "
+        "FROM buyer_status bs LEFT JOIN live_sessions ls ON ls.id = bs.session_id "
+        "ORDER BY bs.session_id, bs.buyer_name"
+    ).fetchall()
+    conn.close()
+    buf = StringIO()
+    buf.write('\ufeff')  # UTF-8 BOM
+    w = csv.writer(buf)
+    w.writerow(['session_id', 'buyer_name', 'status', 'updated_at', 'live_date', 'filename'])
+    for r in rows:
+        w.writerow([r['session_id'], r['buyer_name'], r['status'], r['updated_at'], r['live_date'] or '', r['filename'] or ''])
+    fname = f'buyer_status_{datetime.now().strftime("%Y%m%d_%H%M")}.csv'
+    return Response(buf.getvalue(),
+                    mimetype='text/csv; charset=utf-8',
+                    headers={'Content-Disposition': f'attachment; filename={fname}'})
+
+
+@app.route('/api/buyer/status/import', methods=['POST'])
+def import_buyer_status():
+    """식물 보관 CSV 일괄 복원 (UPSERT)"""
+    import csv
+    from io import StringIO
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    file = request.files['file']
+    try:
+        raw = file.read()
+        text = None
+        for enc in ('utf-8-sig', 'utf-8', 'cp949', 'euc-kr'):
+            try: text = raw.decode(enc); break
+            except UnicodeDecodeError: continue
+        if text is None:
+            return jsonify({'error': '파일 인코딩 해석 실패'}), 400
+    except Exception as e:
+        return jsonify({'error': f'파일 읽기 오류: {e}'}), 400
+
+    added = skipped = 0
+    conn = get_conn()
+    try:
+        reader = csv.DictReader(StringIO(text))
+        fns = [(fn or '').strip().lower() for fn in (reader.fieldnames or [])]
+        if 'session_id' not in fns or 'buyer_name' not in fns or 'status' not in fns:
+            return jsonify({'error': "CSV에 'session_id,buyer_name,status' 헤더 필요"}), 400
+        for row in csv.DictReader(StringIO(text)):
+            sid = (row.get('session_id') or '').strip()
+            buyer = (row.get('buyer_name') or '').strip()
+            status = (row.get('status') or '').strip()
+            updated = (row.get('updated_at') or datetime.now().isoformat()).strip()
+            if not sid or not buyer or status not in ('stored', 'shipped'):
+                skipped += 1; continue
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO buyer_status (session_id, buyer_name, status, updated_at) VALUES (?,?,?,?)",
+                    (int(sid), buyer, status, updated)
+                )
+                added += 1
+            except Exception as e:
+                skipped += 1
+                logger.warning(f"buyer_status import 스킵: {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info(f"📤 buyer_status import: 추가/수정 {added}, 스킵 {skipped}")
+    return jsonify({'ok': True, 'added': added, 'skipped': skipped})
+
+
+@app.route('/api/buyer/status', methods=['GET'])
+def get_buyer_status():
+    """세션의 모든 구매자 상태 조회 → {buyer_name: status} 매핑"""
+    sid = request.args.get('session_id')
+    if not sid:
+        return jsonify({'error': 'session_id 필요'}), 400
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT buyer_name, status FROM buyer_status WHERE session_id=?",
+        (sid,)
+    ).fetchall()
+    conn.close()
+    return jsonify({r['buyer_name']: r['status'] for r in rows})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1046,6 +1166,20 @@ def find_buyer_match(conn, session_id, search_names, amount):
     return (None, None, f"후보없음 ({search_names}, {amount:,}원)")
 
 
+def find_amount_only_candidates(conn, session_id, amount):
+    """동일 합산금액 가진 모든 pending 구매자 반환 — 다중 후보 생성용"""
+    sql = "SELECT buyer_name, SUM(amount) AS total_amount, GROUP_CONCAT(id) AS order_ids "
+    sql += "FROM orders WHERE session_id=? AND status='pending' GROUP BY buyer_name"
+    rows = conn.execute(sql, (session_id,)).fetchall()
+    out = []
+    for r in rows:
+        total = int(r['total_amount'] or 0)
+        if amount_matches(amount, total):
+            ids = [int(x) for x in (r['order_ids'] or '').split(',') if x]
+            out.append({'buyer_name': r['buyer_name'], 'total_amount': total, 'order_ids': ids})
+    return out
+
+
 def save_candidate(conn, session_id, source, source_ref,
                    paid_name, paid_name2, amount, paid_at,
                    buyer_dict, confidence, reason):
@@ -1121,8 +1255,15 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
                 logger.info(f"  ✅ SMS 자동매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건)")
                 return
             elif confidence in ('medium', 'low'):
-                save_candidate(conn, sid, 'sms', sms_id, name, None, amount, recv_time,
-                               buyer, confidence, reason)
+                # 다중 amount-match일 때(low + '명' 포함된 reason) 전체 후보 등록
+                if confidence == 'low' and '명' in (reason or ''):
+                    extras = find_amount_only_candidates(conn, sid, amount)
+                    for ex in extras:
+                        save_candidate(conn, sid, 'sms', sms_id, name, None, amount, recv_time,
+                                       ex, 'low', f"합산금액 동일 ({ex['buyer_name']})")
+                else:
+                    save_candidate(conn, sid, 'sms', sms_id, name, None, amount, recv_time,
+                                   buyer, confidence, reason)
                 conn.commit()
                 return
         logger.info(f"  ⚠️ SMS 매칭/후보 모두 실패: '{name or '-'}' {amount:,}원")
@@ -1187,6 +1328,15 @@ def run_auto_check():
                                          (info['paid_at'], oid))
                         imweb_confirmed += 1
                         logger.info(f"  ✅ 카드결제: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원")
+                        # ⭐ 아임웹 측 주문도 '상품 준비중' → '배송대기'로 자동 전환
+                        try:
+                            order_no_v = iorder.get('order_no') or iorder.get('orderNo')
+                            prod_list = iorder.get('prod_list') or iorder.get('prod_items') or []
+                            prod_order_nos = [p.get('prod_order_no') or p.get('prodOrderNo') for p in prod_list if (p.get('prod_order_no') or p.get('prodOrderNo'))]
+                            if order_no_v:
+                                set_order_to_standby(str(order_no_v), prod_order_nos or None)
+                        except Exception as _e:
+                            logger.warning(f"  배송대기 전환 시도 실패: {_e}")
                     elif conf in ('medium', 'low'):
                         save_candidate(conn, sid, 'imweb', order_no,
                                        info.get('name'), info.get('name2'),
