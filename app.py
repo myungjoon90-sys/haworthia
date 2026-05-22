@@ -188,6 +188,16 @@ def upload_session():
         wb = openpyxl.load_workbook(file, data_only=True)
         ws = wb.active
         orders = parse_invoice_excel(ws)
+        # 🌿 판매품 리스트 시트도 자동 파싱
+        catalog_items = []
+        for sn in wb.sheetnames:
+            if '판매품' in sn or '재고' in sn:
+                try:
+                    catalog_items = parse_product_catalog(wb[sn])
+                    logger.info(f"  📚 판매품 리스트 시트 발견: '{sn}' ({len(catalog_items)}건)")
+                    break
+                except Exception as ce:
+                    logger.warning(f"판매품 시트 파싱 실패: {ce}")
     except Exception as e:
         return jsonify({'error': f'엑셀 파싱 오류: {e}'}), 400
 
@@ -215,6 +225,19 @@ def upload_session():
             (session_id, o['name'], o.get('item', ''), o.get('item_no', ''), o['amount'], o.get('pay_type', ''))
         )
 
+    # 판매품 리스트 백업 — 같은 세션 중복 방지
+    try:
+        for p in catalog_items:
+            conn.execute(
+                '''INSERT INTO product_catalog (session_id, live_date, item_no, item_name, price, remaining)
+                   VALUES (?, ?, ?, ?, ?, ?)''',
+                (session_id, live_date, p.get('item_no',''), p.get('item_name',''), p.get('price'), p.get('remaining',''))
+            )
+        if catalog_items:
+            logger.info(f"  📚 판매품 카탈로그 저장: {len(catalog_items)}건 (session={session_id})")
+    except Exception as e:
+        logger.warning(f"판매품 카탈로그 저장 실패: {e}")
+
     conn.commit()
     conn.close()
 
@@ -230,6 +253,56 @@ def upload_session():
         'check_start': check_start,
         'check_end': check_end
     })
+
+
+def parse_product_catalog(ws):
+    """거래명세표의 '판매품 리스트' 시트에서 (번호, 이름, 가격, 잔여) 추출.
+    헤더 자동 감지: 번호/연번/no, 하월시아/품명/상품/이름, 가격/금액, 잔여/재고"""
+    rows = list(ws.values)
+    result = []
+    NO_HINTS    = ['번호', '연번', 'no']
+    NAME_HINTS  = ['하월시아', '품명', '상품', '식물', '이름']
+    PRICE_HINTS = ['가격', '금액', '판매']
+    REM_HINTS   = ['잔여', '재고', '수량', '개수']
+    header_idx = no_col = name_col = price_col = rem_col = -1
+    for i, row in enumerate(rows[:15]):
+        if not row: continue
+        cells = [str(c or '').strip() for c in row]
+        ni = next((j for j, c in enumerate(cells) if any(h in c.lower() if 'no' in h else h in c for h in NO_HINTS)), -1)
+        nn = next((j for j, c in enumerate(cells) if any(h in c for h in NAME_HINTS)), -1)
+        pp = next((j for j, c in enumerate(cells) if any(h in c for h in PRICE_HINTS)), -1)
+        rr = next((j for j, c in enumerate(cells) if any(h in c for h in REM_HINTS)), -1)
+        if ni >= 0 and nn >= 0 and pp >= 0:
+            header_idx, no_col, name_col, price_col, rem_col = i, ni, nn, pp, rr
+            break
+    if header_idx < 0:
+        return result
+    for row in rows[header_idx+1:]:
+        if not row or all(c is None or str(c).strip() == '' for c in row):
+            continue
+        row = list(row)
+        no_v = row[no_col] if no_col < len(row) else None
+        nm_v = row[name_col] if name_col < len(row) else None
+        pr_v = row[price_col] if price_col < len(row) else None
+        rm_v = row[rem_col] if rem_col >= 0 and rem_col < len(row) else None
+        # 번호/이름이 둘 다 비어 있으면 스킵 (메모 텍스트 등)
+        if (no_v is None or str(no_v).strip() == '') and (not nm_v or not str(nm_v).strip()):
+            continue
+        # 번호 정규화
+        if isinstance(no_v, (int, float)) and float(no_v).is_integer():
+            item_no = str(int(no_v))
+        else:
+            item_no = str(no_v).strip() if no_v is not None else ''
+        item_name = str(nm_v or '').strip()
+        # 가격
+        try:
+            raw = str(pr_v or '').replace(',', '').replace('원', '').strip()
+            price = int(float(raw)) if raw else None
+        except Exception:
+            price = None
+        remaining = str(rm_v).strip() if rm_v is not None and str(rm_v).strip() else ''
+        result.append({'item_no': item_no, 'item_name': item_name, 'price': price, 'remaining': remaining})
+    return result
 
 
 def parse_invoice_excel(ws):
@@ -420,49 +493,321 @@ def manual_unconfirm_order(order_id):
 
 @app.route('/api/delivery/excel', methods=['GET'])
 def download_delivery_excel():
+    """입금확인 완료 엑셀 — 구매자별로 회원명단의 전화번호/주소 자동 매핑.
+    구매자명을 키로 nick_mappings(realname)도 fallback 조회 → members.name 매칭.
+    """
     session_id = request.args.get('session_id')
     conn = get_conn()
 
-    sql = '''SELECT o.buyer_name, o.item, o.amount, o.pay_type, o.confirmed_at, ls.live_date
-             FROM orders o
-             JOIN live_sessions ls ON o.session_id = ls.id
-             WHERE o.status = 'confirmed' '''
+    # 구매자별 한 행 — 상품은 ',' 로 합치고, 금액은 SUM
+    sql = ("SELECT o.buyer_name, GROUP_CONCAT(o.item, ', ') AS items, "
+           "SUM(o.amount) AS total_amount, MIN(o.pay_type) AS pay_type, "
+           "MAX(o.confirmed_at) AS confirmed_at, ls.live_date "
+           "FROM orders o JOIN live_sessions ls ON o.session_id=ls.id "
+           "WHERE o.status='confirmed'")
     params = []
     if session_id:
-        sql += ' AND o.session_id = ?'
+        sql += " AND o.session_id=?"
         params.append(session_id)
-    sql += ' ORDER BY o.confirmed_at DESC'
+    sql += " GROUP BY o.session_id, o.buyer_name ORDER BY MAX(o.confirmed_at) DESC"
 
     items = conn.execute(sql, params).fetchall()
+
+    # 회원명단 lookup: 이름 → row
+    member_map = {}
+    for m in conn.execute('SELECT * FROM members').fetchall():
+        member_map[m['name']] = dict(m)
+    # 닉네임 매핑(positive)으로 buyer_name → realname 변환
+    nick_map = {}
+    for n in conn.execute("SELECT nickname, realname FROM nick_mappings WHERE COALESCE(negative,0)=0").fetchall():
+        if n['nickname'] and n['realname']:
+            nick_map[n['nickname']] = n['realname']
+
     conn.close()
+
+    def lookup_member(buyer):
+        if not buyer: return None
+        if buyer in member_map: return member_map[buyer]
+        # 닉네임 매핑 따라가기
+        real = nick_map.get(buyer)
+        if real and real in member_map: return member_map[real]
+        # 역방향 — buyer가 realname인 경우, 그 자체 이름으로 회원
+        return None
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = '배송목록'
+    ws.title = '입금확인 배송목록'
 
-    # 헤더
-    headers = ['구매자명', '상품', '금액', '결제방법', '입금확인일시', '라이브날짜']
+    headers = ['구매자명', '전화번호', '우편번호', '받는분주소(전체, 분할)', '배송메세지1',
+               '상품', '금액', '결제방법', '입금확인일시', '라이브날짜']
     header_fill = PatternFill(fill_type='solid', fgColor='1F6B2E')
     for ci, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=ci, value=h)
-        cell.fill   = header_fill
-        cell.font   = Font(color='FFFFFF', bold=True)
+        cell.fill = header_fill
+        cell.font = Font(color='FFFFFF', bold=True)
 
-    # 데이터
-    pay_labels = {'card': '카드결제', 'transfer': '계좌이체', '': ''}
-    for ri, item in enumerate(items, 2):
-        row = list(item)
-        row[3] = pay_labels.get(row[3], row[3])
-        for ci, val in enumerate(row, 1):
-            ws.cell(row=ri, column=ci, value=val)
+    pay_labels = {'card': '카드결제', 'transfer': '계좌이체', 'manual': '수동확인', None: '', '': ''}
+    matched = 0
+    unmatched = 0
+    for ri, row in enumerate(items, 2):
+        buyer = row['buyer_name']
+        m = lookup_member(buyer)
+        if m: matched += 1
+        else: unmatched += 1
+        ws.cell(row=ri, column=1, value=buyer)
+        ws.cell(row=ri, column=2, value=(m or {}).get('phone',''))
+        ws.cell(row=ri, column=3, value=(m or {}).get('postal_code',''))
+        ws.cell(row=ri, column=4, value=(m or {}).get('address',''))
+        ws.cell(row=ri, column=5, value=(m or {}).get('message',''))
+        ws.cell(row=ri, column=6, value=row['items'])
+        ws.cell(row=ri, column=7, value=row['total_amount'])
+        ws.cell(row=ri, column=8, value=pay_labels.get(row['pay_type'], row['pay_type'] or ''))
+        ws.cell(row=ri, column=9, value=row['confirmed_at'])
+        ws.cell(row=ri, column=10, value=row['live_date'])
+
+    # 컬럼 폭 자동(대략)
+    widths = [14, 15, 10, 50, 30, 60, 12, 10, 19, 12]
+    for ci, w in enumerate(widths, 1):
+        ws.column_dimensions[chr(64 + ci)].width = w
+
+    logger.info(f"📦 배송목록 다운로드: 총 {len(items)}명 (회원명단 매칭 {matched}, 미매칭 {unmatched})")
 
     output = BytesIO()
     wb.save(output)
     output.seek(0)
 
-    fname = f'배송목록_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
+    fname = f'입금확인_배송목록_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
     return send_file(output, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ══════════════════════════════════════════════════════════════════
+#  회원명단 (이름 → 전화번호/주소 매핑)  ★ v17
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/members/list', methods=['GET'])
+def members_list():
+    conn = get_conn()
+    rows = conn.execute('SELECT * FROM members ORDER BY name').fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/members/upload', methods=['POST'])
+def members_upload():
+    """엑셀 업로드 — 헤더: 이름, 전화번호, 우편번호, 받는분주소(전체, 분할), 배송메세지1"""
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    file = request.files['file']
+    try:
+        wb = openpyxl.load_workbook(file, data_only=True)
+        ws = wb.active
+        rows = list(ws.values)
+    except Exception as e:
+        return jsonify({'error': f'엑셀 파싱 오류: {e}'}), 400
+
+    name_col = phone_col = post_col = addr_col = msg_col = -1
+    header_idx = -1
+    for i, row in enumerate(rows[:8]):
+        if not row: continue
+        cells = [str(c or '').strip() for c in row]
+        nc = next((j for j, c in enumerate(cells) if c == '이름' or '성함' in c or '구매자' in c), -1)
+        pc = next((j for j, c in enumerate(cells) if '전화' in c or '핸드폰' in c or '폰' in c), -1)
+        oc = next((j for j, c in enumerate(cells) if '우편' in c), -1)
+        ac = next((j for j, c in enumerate(cells) if '주소' in c), -1)
+        mc = next((j for j, c in enumerate(cells) if '메세지' in c or '메시지' in c or '메모' in c), -1)
+        if nc >= 0 and (pc >= 0 or ac >= 0):
+            header_idx = i; name_col = nc; phone_col = pc
+            post_col = oc; addr_col = ac; msg_col = mc
+            break
+    if header_idx < 0:
+        return jsonify({'error': '헤더(이름 + 전화번호/주소) 인식 실패'}), 400
+
+    added = updated = skipped = 0
+    conn = get_conn()
+    try:
+        for row in rows[header_idx + 1:]:
+            if not row: continue
+            row = list(row)
+            name = str(row[name_col] or '').strip() if name_col < len(row) else ''
+            if not name: skipped += 1; continue
+            phone = str(row[phone_col] or '').strip() if phone_col >= 0 and phone_col < len(row) else ''
+            post  = str(row[post_col]  or '').strip() if post_col  >= 0 and post_col  < len(row) else ''
+            addr  = str(row[addr_col]  or '').strip() if addr_col  >= 0 and addr_col  < len(row) else ''
+            msg   = str(row[msg_col]   or '').strip() if msg_col   >= 0 and msg_col   < len(row) else ''
+            existing = conn.execute('SELECT id FROM members WHERE name=?', (name,)).fetchone()
+            conn.execute(
+                "INSERT OR REPLACE INTO members (name, phone, postal_code, address, message, updated_at) VALUES (?,?,?,?,?,?)",
+                (name, phone, post, addr, msg, datetime.now().isoformat())
+            )
+            if existing: updated += 1
+            else: added += 1
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info(f"📇 회원명단 import: 추가 {added}, 수정 {updated}, 스킵 {skipped}")
+    return jsonify({'ok': True, 'added': added, 'updated': updated, 'skipped': skipped})
+
+
+@app.route('/api/members/download', methods=['GET'])
+def members_download():
+    """회원명단 전체를 동일 양식으로 엑셀 다운로드"""
+    conn = get_conn()
+    rows = conn.execute('SELECT * FROM members ORDER BY name').fetchall()
+    conn.close()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '회원명단'
+    headers = ['이름', '전화번호', '우편번호', '받는분주소(전체, 분할)', '배송메세지1']
+    header_fill = PatternFill(fill_type='solid', fgColor='1F6B2E')
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = Font(color='FFFFFF', bold=True)
+    for ri, r in enumerate(rows, 2):
+        ws.cell(row=ri, column=1, value=r['name'])
+        ws.cell(row=ri, column=2, value=r['phone'])
+        ws.cell(row=ri, column=3, value=r['postal_code'])
+        ws.cell(row=ri, column=4, value=r['address'])
+        ws.cell(row=ri, column=5, value=r['message'])
+
+    output = BytesIO(); wb.save(output); output.seek(0)
+    fname = f'회원명단_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/api/members/<int:mid>', methods=['DELETE'])
+def members_delete(mid):
+    conn = get_conn()
+    conn.execute('DELETE FROM members WHERE id=?', (mid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  총 판매품 리스트 (거래명세표 '판매품 리스트' 시트 백업)  ★ v17
+# ══════════════════════════════════════════════════════════════════
+@app.route('/api/products/list', methods=['GET'])
+def products_list():
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+    sql = ("SELECT pc.*, ls.filename FROM product_catalog pc "
+           "LEFT JOIN live_sessions ls ON pc.session_id=ls.id")
+    if session_id:
+        sql += " WHERE pc.session_id=? ORDER BY pc.id"
+        rows = conn.execute(sql, (session_id,)).fetchall()
+    else:
+        sql += " ORDER BY pc.live_date DESC, pc.id"
+        rows = conn.execute(sql).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/products/download', methods=['GET'])
+def products_download():
+    """판매품 카탈로그 전체(또는 한 세션) 엑셀 다운로드"""
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+    if session_id:
+        rows = conn.execute('SELECT * FROM product_catalog WHERE session_id=? ORDER BY id', (session_id,)).fetchall()
+    else:
+        rows = conn.execute('SELECT * FROM product_catalog ORDER BY live_date DESC, id').fetchall()
+    conn.close()
+
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = '판매품 리스트'
+    headers = ['라이브날짜', '번호', '하월시아 이름', '판매가격', '잔여갯수']
+    header_fill = PatternFill(fill_type='solid', fgColor='1F6B2E')
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = Font(color='FFFFFF', bold=True)
+    for ri, r in enumerate(rows, 2):
+        ws.cell(row=ri, column=1, value=r['live_date'])
+        ws.cell(row=ri, column=2, value=r['item_no'])
+        ws.cell(row=ri, column=3, value=r['item_name'])
+        ws.cell(row=ri, column=4, value=r['price'])
+        ws.cell(row=ri, column=5, value=r['remaining'])
+
+    output = BytesIO(); wb.save(output); output.seek(0)
+    fname = f'판매품리스트_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/api/products/upload', methods=['POST'])
+def products_upload():
+    """판매품 리스트 수동 업로드 (백업/복원).
+       헤더: [라이브날짜], 번호, 하월시아 이름, 판매가격, 잔여갯수
+       기존 백업본(session_id=0/NULL)은 모두 삭제하고 새로 채움."""
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    file = request.files['file']
+    try:
+        wb = openpyxl.load_workbook(file, data_only=True)
+        ws = None
+        for sn in wb.sheetnames:
+            if '판매품' in sn or '재고' in sn:
+                ws = wb[sn]; break
+        if ws is None:
+            ws = wb.active
+        rows_raw = list(ws.values)
+    except Exception as e:
+        return jsonify({'error': f'엑셀 파싱 오류: {e}'}), 400
+
+    # 헤더 찾기
+    header_idx = no_col = name_col = price_col = rem_col = date_col = -1
+    for i, row in enumerate(rows_raw[:8]):
+        if not row: continue
+        cells = [str(c or '').strip() for c in row]
+        ni = next((j for j, c in enumerate(cells) if c == '번호' or '연번' in c or c.lower() == 'no'), -1)
+        nn = next((j for j, c in enumerate(cells) if '하월시아' in c or '품명' in c or '상품' in c or c == '이름'), -1)
+        pp = next((j for j, c in enumerate(cells) if '가격' in c or '금액' in c), -1)
+        rr = next((j for j, c in enumerate(cells) if '잔여' in c or '재고' in c or '수량' in c), -1)
+        dc = next((j for j, c in enumerate(cells) if '라이브' in c or '날짜' in c), -1)
+        if ni >= 0 and nn >= 0 and pp >= 0:
+            header_idx = i; no_col=ni; name_col=nn; price_col=pp; rem_col=rr; date_col=dc
+            break
+    if header_idx < 0:
+        return jsonify({'error': '헤더(번호/이름/가격) 인식 실패'}), 400
+
+    added = 0
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM product_catalog WHERE session_id IS NULL OR session_id=0")
+        for row in rows_raw[header_idx+1:]:
+            if not row: continue
+            row = list(row)
+            no_v = row[no_col] if no_col < len(row) else None
+            nm_v = row[name_col] if name_col < len(row) else None
+            pr_v = row[price_col] if price_col < len(row) else None
+            rm_v = row[rem_col] if rem_col >= 0 and rem_col < len(row) else None
+            dt_v = row[date_col] if date_col >= 0 and date_col < len(row) else None
+            if (no_v is None or str(no_v).strip() == '') and (not nm_v or not str(nm_v).strip()):
+                continue
+            if isinstance(no_v, (int, float)) and float(no_v).is_integer():
+                item_no = str(int(no_v))
+            else:
+                item_no = str(no_v).strip() if no_v is not None else ''
+            try:
+                raw = str(pr_v or '').replace(',', '').replace('원', '').strip()
+                price = int(float(raw)) if raw else None
+            except Exception:
+                price = None
+            item_name = str(nm_v or '').strip()
+            remaining = str(rm_v).strip() if rm_v is not None and str(rm_v).strip() else ''
+            live_date = str(dt_v).strip() if dt_v else ''
+            conn.execute(
+                "INSERT INTO product_catalog (session_id, live_date, item_no, item_name, price, remaining) VALUES (?,?,?,?,?,?)",
+                (0, live_date, item_no, item_name, price, remaining)
+            )
+            added += 1
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info(f"📚 판매품 리스트 import: {added}건")
+    return jsonify({'ok': True, 'added': added})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1433,15 +1778,33 @@ def run_auto_check():
         conn.close()
 
 
+# ══════════════════════════════════════════════════════════════════
+#  모듈 레벨 초기화 — gunicorn으로 import 되어도 스케줄러가 동작하도록.
+# ══════════════════════════════════════════════════════════════════
+_SCHEDULER_STARTED = False
+
+def _ensure_scheduler():
+    """스케줄러 1회만 시작 (gunicorn 멀티워커 환경에서도 첫 import 때 한 번)."""
+    global _SCHEDULER_STARTED
+    if _SCHEDULER_STARTED:
+        return
+    try:
+        sched = BackgroundScheduler(timezone='Asia/Seoul')
+        # 첫 실행: 서버 기동 10초 뒤 즉시 1회 → 이후 30분마다
+        sched.add_job(run_auto_check, 'interval', minutes=30,
+                      id='interval_check', replace_existing=True,
+                      next_run_time=datetime.now() + timedelta(seconds=10))
+        sched.start()
+        _SCHEDULER_STARTED = True
+        logger.info("⏰ 스케줄러 시작 (10초 후 1회 + 30분마다)")
+    except Exception as e:
+        logger.error(f"스케줄러 시작 실패: {e}")
+
+# DB 초기화 + 스케줄러 시작 (모듈 import 시점)
+init_db()
+_ensure_scheduler()
+
 if __name__ == '__main__':
-    init_db()
-
-    scheduler = BackgroundScheduler(timezone='Asia/Seoul')
-    scheduler.add_job(run_auto_check, 'interval', minutes=30,
-                      id='interval_check', replace_existing=True)
-    scheduler.start()
-    logger.info("⏰ 스케줄러 시작 (30분마다 자동 확인)")
-
     PORT = int(os.environ.get('PORT', 5000))
     logger.info(f"🌿 지양하월시아 서버 시작! 포트: {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
