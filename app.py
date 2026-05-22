@@ -1150,8 +1150,8 @@ def find_buyer_match(conn, session_id, search_names, amount):
     # 3) 합산금액만 일치 (1명) → medium
     amount_only = [g for g in grouped if amount_matches(amount, g['total_amount'])]
     if len(amount_only) == 1:
-        g = amount_only[0]
-        return (g, 'medium', f"합산금액만 일치({g['buyer_name']})")
+        only = amount_only[0]
+        return (only, 'medium', f"합산금액만 일치({only['buyer_name']})")
     elif len(amount_only) > 1:
         return (amount_only[0], 'low', f"합산금액 같은 {len(amount_only)}명")
 
@@ -1215,15 +1215,16 @@ def save_candidate(conn, session_id, source, source_ref,
 
 
 def match_sms_to_order(parsed, recv_time, sms_id=None):
-    """SMS 입금 → SUM 합산 기준 매칭. high면 자동확인, 그 외는 의심후보 등록."""
+    """SMS/은행 입금 한 건 → SUM 합산 기준 매칭.
+    [v14] 모든 세션을 끝까지 검사해 어디든 HIGH가 있으면 그걸 자동확인.
+          HIGH가 한 곳도 없으면 가장 신뢰도 높은 medium/low를 후보로 저장.
+    """
     name   = parsed.get('name')
     amount = parsed['amount']
-    today  = datetime.now().strftime('%Y-%m-%d')
     now    = datetime.now().isoformat()
 
     conn = get_conn()
     try:
-        # 가장 최근 세션 (활성/비활성 무관) — pending 1건이라도 있으면 매칭 시도
         sessions = conn.execute('''
             SELECT * FROM live_sessions
             WHERE EXISTS (SELECT 1 FROM orders o WHERE o.session_id=live_sessions.id AND o.status='pending')
@@ -1234,12 +1235,18 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
             return
 
         search_names = resolve_names(conn, name) if name else []
+        logger.info(f"  🔎 매칭 시작: '{name or '-'}' {amount:,}원 / search_names={search_names} / sessions={[s['id'] for s in sessions]}")
 
+        rank = {'high': 3, 'medium': 2, 'low': 1}
+        best_partial = None  # (sid, buyer, confidence, reason)
+
+        # ── Pass 1: 전체 세션 훑어서 HIGH 찾고, 못 찾으면 best partial 트래킹
         for sess in sessions:
             sid = sess['id']
             buyer, confidence, reason = find_buyer_match(
                 conn, sid, search_names or [name or ''], amount
             )
+            logger.info(f"    session {sid} ({sess['live_date']}): {confidence} | {reason}")
             if confidence == 'high':
                 for oid in buyer['order_ids']:
                     conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?,
@@ -1252,20 +1259,27 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
                                    WHERE parsed_amount=? AND COALESCE(parsed_name,'')=COALESCE(?,'') AND matched=0''',
                                  (amount, name))
                 conn.commit()
-                logger.info(f"  ✅ SMS 자동매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건)")
+                logger.info(f"  ✅ SMS 자동매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원 ({len(buyer['order_ids'])}건) [session={sid}]")
                 return
             elif confidence in ('medium', 'low'):
-                # 다중 amount-match일 때(low + '명' 포함된 reason) 전체 후보 등록
-                if confidence == 'low' and '명' in (reason or ''):
-                    extras = find_amount_only_candidates(conn, sid, amount)
-                    for ex in extras:
-                        save_candidate(conn, sid, 'sms', sms_id, name, None, amount, recv_time,
-                                       ex, 'low', f"합산금액 동일 ({ex['buyer_name']})")
-                else:
+                if best_partial is None or rank.get(confidence, 0) > rank.get(best_partial[2], 0):
+                    best_partial = (sid, buyer, confidence, reason)
+
+        # ── Pass 2: HIGH 없음 → 가장 신뢰도 높은 partial을 후보로
+        if best_partial is not None:
+            sid, buyer, confidence, reason = best_partial
+            if confidence == 'low' and '명' in (reason or ''):
+                # 동일 합산금액 후보 전부 등록
+                extras = find_amount_only_candidates(conn, sid, amount)
+                for ex in extras:
                     save_candidate(conn, sid, 'sms', sms_id, name, None, amount, recv_time,
-                                   buyer, confidence, reason)
-                conn.commit()
-                return
+                                   ex, 'low', f"합산금액 동일 ({ex['buyer_name']})")
+            else:
+                save_candidate(conn, sid, 'sms', sms_id, name, None, amount, recv_time,
+                               buyer, confidence, reason)
+            conn.commit()
+            return
+
         logger.info(f"  ⚠️ SMS 매칭/후보 모두 실패: '{name or '-'}' {amount:,}원")
     except Exception as e:
         logger.error(f"SMS 매칭 오류: {e}")
@@ -1347,26 +1361,20 @@ def run_auto_check():
                 error_msg = f"아임웹:{str(e)}"
                 logger.error(f"아임웹 조회 오류: {e}")
 
-            # 2) 미매칭 SMS 재대조 (SUM 합산)
+            # 2) 미매칭 SMS 재대조 — [v14] match_sms_to_order에 위임 (다중세션 high 우선)
             try:
                 unmatched_sms = conn.execute("SELECT * FROM sms_payments WHERE matched=0").fetchall()
+                conn.commit()  # 위 INSERT 확정 후 새 conn에서도 보이게
                 for sms in unmatched_sms:
                     sms = dict(sms)
                     amt = sms.get('parsed_amount') or 0
                     sname = sms.get('parsed_name')
                     if not amt: continue
-                    search_names = resolve_names(conn, sname) if sname else [sname or '']
-                    buyer, conf, reason = find_buyer_match(conn, sid, search_names, amt)
-                    if conf == 'high':
-                        for oid in buyer['order_ids']:
-                            conn.execute("UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='transfer', bank_date=? WHERE id=?",
-                                         (datetime.now().isoformat(), sms['received_at'], oid))
-                        conn.execute("UPDATE sms_payments SET matched=1 WHERE id=?", (sms['id'],))
+                    before = conn.execute("SELECT matched FROM sms_payments WHERE id=?", (sms['id'],)).fetchone()
+                    match_sms_to_order({'name': sname, 'amount': amt}, sms['received_at'], sms_id=sms['id'])
+                    after = conn.execute("SELECT matched FROM sms_payments WHERE id=?", (sms['id'],)).fetchone()
+                    if before and after and before[0] == 0 and after[0] == 1:
                         sms_confirmed += 1
-                        logger.info(f"  ✅ SMS 재매칭: {buyer['buyer_name']} 합계 {buyer['total_amount']:,}원")
-                    elif conf in ('medium', 'low'):
-                        save_candidate(conn, sid, 'sms', sms['id'], sname, None,
-                                       amt, sms['received_at'], buyer, conf, reason)
             except Exception as e:
                 sms_status = 'error'
                 error_msg = (error_msg or '') + f" SMS:{str(e)}"
