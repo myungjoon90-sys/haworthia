@@ -104,6 +104,29 @@ def init_db():
         FOREIGN KEY (session_id) REFERENCES live_sessions(id)
     )''')
 
+    # ── 회원명단 (이름→전화번호/주소 매핑) ─────────────────────────
+    c.execute('''CREATE TABLE IF NOT EXISTS members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        phone TEXT,
+        postal_code TEXT,
+        address TEXT,
+        message TEXT,
+        updated_at TEXT
+    )''')
+
+    # ── 총 판매품 리스트 (거래명세표의 '판매품 리스트' 시트 백업) ────
+    c.execute('''CREATE TABLE IF NOT EXISTS product_catalog (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER,
+        live_date TEXT,
+        item_no TEXT,
+        item_name TEXT,
+        price INTEGER,
+        remaining TEXT,
+        FOREIGN KEY (session_id) REFERENCES live_sessions(id)
+    )''')
+
     conn.commit()
     conn.close()
     print("✅ DB 초기화 완료")
