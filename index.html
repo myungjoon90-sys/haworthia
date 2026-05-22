@@ -464,7 +464,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="card" style="margin-bottom:16px;">
     <div class="card-body">
       <p style="color:var(--muted);font-size:13px;margin-bottom:10px;">
-        은행에서 받은 입금내역 엑셀(.xls/.xlsx)을 올리면 각 행을 자동 매칭합니다.
+        은행 입금내역 엑셀(.xls/.xlsx)을 선택한 뒤 <strong style="color:var(--green)">✓ 수동입금확인</strong> 한 번만 누르면 됩니다.
+        은행 엑셀 파싱+매칭 → 아임웹 카드결제 확인을 자동 실행합니다.
         이름·금액이 정확히 일치하면 입금확인으로, 부분 일치는 의심후보로 들어갑니다.
       </p>
       <div class="form-row">
@@ -472,7 +473,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
           <input type="file" id="bankInput" accept=".xls,.xlsx" onchange="handleBankUpload(this.files)">
         </div>
         <button class="btn btn-primary" onclick="submitBankUpload()" id="bankUploadBtn" style="align-self:flex-end;">⬆️ 은행 엑셀 업로드</button>
-        <button class="btn btn-blue" onclick="runManualCheckBank()" id="manualCheckBankBtn" style="align-self:flex-end;" title="업로드된 입금건들 재매칭 + 아임웹 카드결제 확인까지 한 번에">✓ 수동입금확인</button>
+        <button class="btn btn-blue" onclick="runManualCheckBank()" id="manualCheckBankBtn" style="align-self:flex-end;" title="은행 엑셀 파싱+매칭 + 아임웹 카드결제 확인까지 한 번에 실행">✓ 수동입금확인 (전체 실행)</button>
       </div>
       <div id="bankResult" style="margin-top:8px;font-size:13px;color:var(--muted);"></div>
     </div>
@@ -1452,21 +1453,46 @@ async function submitBankUpload() {
 async function runManualCheckBank() {
   const btn = document.getElementById('manualCheckBankBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> 확인 중...';
+  btn.innerHTML = '<span class="spinner"></span> 처리 중...';
+  const resultDiv = document.getElementById('bankResult');
   try {
-    const r = await fetch(API + '/api/check/run', {method:'POST'});
-    const d = await r.json();
-    if (d.ok) {
-      toast('✅ ' + (d.message || '수동입금확인 완료'), 'ok');
+    // 1) 은행 엑셀이 선택돼 있으면 먼저 업로드해서 매칭
+    const inp = document.getElementById('bankInput');
+    if (inp && inp.files && inp.files[0]) {
+      btn.innerHTML = '<span class="spinner"></span> 은행 엑셀 처리 중...';
+      const fd = new FormData();
+      fd.append('file', inp.files[0]);
+      try {
+        const r = await fetch(API + '/api/bank/upload', {method:'POST', body:fd});
+        const d = await r.json();
+        if (d.ok) {
+          const msg = `은행입금: 총 ${d.total}건 → 자동확인 ${d.matched_high}, 의심후보 ${d.matched_candidate}, 매칭실패 ${d.no_match}`;
+          if (resultDiv) resultDiv.innerHTML = `<span style="color:var(--green);">${msg}</span>`;
+          toast(msg, 'ok');
+          inp.value = '';
+        } else {
+          if (resultDiv) resultDiv.innerHTML = `<span style="color:var(--red);">${d.error || '은행 엑셀 처리 실패'}</span>`;
+          toast('은행 엑셀: ' + (d.error || '실패'), 'err');
+        }
+      } catch(e) {
+        if (resultDiv) resultDiv.innerHTML = `<span style="color:var(--red);">은행 엑셀 업로드 통신 실패</span>`;
+      }
+    }
+    // 2) 아임웹 + 미매칭 SMS 재대조
+    btn.innerHTML = '<span class="spinner"></span> 아임웹 확인 중...';
+    const r2 = await fetch(API + '/api/check/run', {method:'POST'});
+    const d2 = await r2.json();
+    if (d2.ok) {
+      toast('✅ ' + (d2.message || '수동입금확인 완료'), 'ok');
       loadAutoPage();
     } else {
-      toast('오류: ' + (d.error || '실패'), 'err');
+      toast('오류: ' + (d2.error || '실패'), 'err');
     }
   } catch(e) {
     toast('서버 연결 실패', 'err');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '✓ 수동입금확인';
+    btn.innerHTML = '✓ 수동입금확인 (전체 실행)';
   }
 }
 
