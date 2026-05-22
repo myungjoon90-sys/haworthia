@@ -754,7 +754,32 @@ def approve_candidate(cand_id):
             "SELECT id, amount FROM orders WHERE session_id=? AND buyer_name=? AND status='pending'",
             (target_session, target_buyer)).fetchall()
         if not pending:
-            return jsonify({'error': f"세션{target_session} '{target_buyer}' pending 없음"}), 404
+            # 이 buyer가 다른 경로(이전 후보 승인, 자동매칭 등)로 이미 confirmed 됐을 가능성 체크
+            any_orders = conn.execute(
+                "SELECT id, status FROM orders WHERE session_id=? AND buyer_name=?",
+                (target_session, target_buyer)).fetchall()
+            if any_orders:
+                # 이미 입금확인된 구매자 — 후보만 닫고 매핑은 추가
+                now = datetime.now().isoformat()
+                conn.execute("UPDATE match_candidates SET status='approved', decided_at=?, candidate_buyer_name=? WHERE id=?",
+                             (now, target_buyer, cand_id))
+                paid_name = cand.get('paid_name')
+                if paid_name and target_buyer and paid_name != target_buyer:
+                    try:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO nick_mappings (nickname, realname, negative) VALUES (?, ?, 0)",
+                            (paid_name, target_buyer))
+                        logger.info(f"  🔗 매핑 자동 추가 (이미 확인): '{paid_name}' ↔ '{target_buyer}'")
+                    except Exception as e:
+                        logger.warning(f"매핑 자동추가 실패: {e}")
+                if cand['source'] == 'sms' and cand.get('source_ref'):
+                    try: conn.execute('UPDATE sms_payments SET matched=1 WHERE id=?', (int(cand['source_ref']),))
+                    except: pass
+                conn.commit()
+                logger.info(f"  ℹ️ 이미 확인된 구매자: '{target_buyer}' — 후보 닫고 매핑만 추가")
+                return jsonify({'ok': True, 'buyer_name': target_buyer, 'rows_confirmed': 0, 'total_amount': 0,
+                                'message': f"'{target_buyer}' 는 이미 입금확인됨 — 후보 닫고 매핑 추가"})
+            return jsonify({'error': f"세션{target_session} '{target_buyer}' 주문이 없음 (이미 삭제됐을 수 있음)"}), 404
         pay_type = 'card' if cand['source'] == 'imweb' else 'transfer'
         now = datetime.now().isoformat()
         for row in pending:
@@ -780,6 +805,22 @@ def approve_candidate(cand_id):
         total = sum(r['amount'] for r in pending)
         logger.info(f"  👍 후보 승인: cand={cand_id} → '{target_buyer}' ({len(pending)}건 합{total:,}원)")
         return jsonify({'ok': True, 'buyer_name': target_buyer, 'rows_confirmed': len(pending), 'total_amount': total})
+    finally:
+        conn.close()
+
+
+@app.route('/api/candidates/<int:cand_id>/delete', methods=['POST'])
+def delete_candidate(cand_id):
+    """삭제 — 후보를 그냥 제거. 닉네임 매핑 동일인/불일치 어느쪽도 추가하지 않음."""
+    conn = get_conn()
+    try:
+        cand = conn.execute('SELECT * FROM match_candidates WHERE id=?', (cand_id,)).fetchone()
+        if not cand:
+            return jsonify({'error': '후보 없음'}), 404
+        conn.execute("DELETE FROM match_candidates WHERE id=?", (cand_id,))
+        conn.commit()
+        logger.info(f"  🗑 후보 삭제: cand={cand_id} (매핑 변동 없음)")
+        return jsonify({'ok': True})
     finally:
         conn.close()
 
