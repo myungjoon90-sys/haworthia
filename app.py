@@ -594,33 +594,67 @@ def members_list():
 
 @app.route('/api/members/upload', methods=['POST'])
 def members_upload():
-    """엑셀 업로드 — 헤더: 이름, 전화번호, 우편번호, 받는분주소(전체, 분할), 배송메세지1"""
+    """엑셀 업로드 — 헤더: 이름, 전화번호, 우편번호, 받는분주소(전체, 분할), 배송메세지1
+    [v20] robust: .xls 지원, 다중 시트 자동 탐색, fuzzy 헤더 매칭."""
     if 'file' not in request.files:
         return jsonify({'error': '파일이 없습니다'}), 400
     file = request.files['file']
+    fn = (file.filename or '').lower()
+    # 모든 시트 후보 수집 (xlsx/xls 둘 다 지원)
+    sheets_rows = []  # [(sheet_name, [rows])]
     try:
-        wb = openpyxl.load_workbook(file, data_only=True)
-        ws = wb.active
-        rows = list(ws.values)
+        if fn.endswith('.xls') and not fn.endswith('.xlsx'):
+            import xlrd
+            data = file.read()
+            wb = xlrd.open_workbook(file_contents=data)
+            for si in range(wb.nsheets):
+                sh = wb.sheet_by_index(si)
+                rr = [[sh.cell_value(r, c) for c in range(sh.ncols)] for r in range(sh.nrows)]
+                sheets_rows.append((sh.name, rr))
+        else:
+            wb = openpyxl.load_workbook(file, data_only=True)
+            for sn in wb.sheetnames:
+                rr = [list(row) for row in wb[sn].values]
+                sheets_rows.append((sn, rr))
     except Exception as e:
         return jsonify({'error': f'엑셀 파싱 오류: {e}'}), 400
 
-    name_col = phone_col = post_col = addr_col = msg_col = -1
-    header_idx = -1
-    for i, row in enumerate(rows[:8]):
-        if not row: continue
-        cells = [str(c or '').strip() for c in row]
-        nc = next((j for j, c in enumerate(cells) if c == '이름' or '성함' in c or '구매자' in c), -1)
-        pc = next((j for j, c in enumerate(cells) if '전화' in c or '핸드폰' in c or '폰' in c), -1)
-        oc = next((j for j, c in enumerate(cells) if '우편' in c), -1)
-        ac = next((j for j, c in enumerate(cells) if '주소' in c), -1)
-        mc = next((j for j, c in enumerate(cells) if '메세지' in c or '메시지' in c or '메모' in c), -1)
-        if nc >= 0 and (pc >= 0 or ac >= 0):
-            header_idx = i; name_col = nc; phone_col = pc
-            post_col = oc; addr_col = ac; msg_col = mc
+    # 시트별로 헤더 탐색
+    def detect_header(rows):
+        for i, row in enumerate(rows[:10]):
+            if not row: continue
+            cells = [str(c or '').strip() for c in row]
+            nc = next((j for j, c in enumerate(cells) if '이름' in c or '성함' in c or '구매자' in c or '성명' in c or '수취인' in c or '수령인' in c), -1)
+            pc = next((j for j, c in enumerate(cells) if '전화' in c or '핸드폰' in c or '폰번호' in c or 'phone' in c.lower() or '연락' in c), -1)
+            oc = next((j for j, c in enumerate(cells) if '우편' in c or '우편번호' in c), -1)
+            ac = next((j for j, c in enumerate(cells) if '주소' in c), -1)
+            mc = next((j for j, c in enumerate(cells) if '메세지' in c or '메시지' in c or '메모' in c), -1)
+            if nc >= 0 and (pc >= 0 or ac >= 0):
+                return i, nc, pc, oc, ac, mc
+        return None
+
+    target = None
+    for sn, rr in sheets_rows:
+        det = detect_header(rr)
+        if det:
+            target = (sn, rr, det)
             break
-    if header_idx < 0:
-        return jsonify({'error': '헤더(이름 + 전화번호/주소) 인식 실패'}), 400
+
+    if not target:
+        # 진단용: 어떤 시트에 어떤 헤더가 있었는지 알려주기
+        diag = []
+        for sn, rr in sheets_rows[:3]:
+            head_preview = []
+            for r in rr[:5]:
+                cells = [str(c or '').strip() for c in (r or [])][:8]
+                head_preview.append(' | '.join(cells))
+            diag.append(f"[{sn}]: " + " / ".join(head_preview))
+        logger.warning(f"회원명단 헤더 인식 실패 — 파일 구조: {' || '.join(diag)[:500]}")
+        return jsonify({'error': '헤더(이름 + 전화번호/주소) 인식 실패. 첫 행에 "이름" 과 "전화번호" 또는 "주소" 키워드가 있어야 합니다.',
+                        'sheets_found': [sn for sn, _ in sheets_rows]}), 400
+
+    sn, rows, (header_idx, name_col, phone_col, post_col, addr_col, msg_col) = target
+    logger.info(f"📇 회원명단 시트 '{sn}' 헤더={header_idx}행 name={name_col} phone={phone_col} post={post_col} addr={addr_col} msg={msg_col}")
 
     added = updated = skipped = 0
     conn = get_conn()
@@ -686,6 +720,32 @@ def members_delete(mid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/members/<int:mid>', methods=['PUT', 'PATCH'])
+def members_update(mid):
+    """회원 정보 수정 (한 필드 또는 여러 필드 가능)"""
+    data = request.get_json(silent=True) or {}
+    fields = {}
+    for k in ('name', 'phone', 'postal_code', 'address', 'message'):
+        if k in data:
+            fields[k] = str(data[k] or '').strip()
+    if not fields:
+        return jsonify({'error': '수정할 필드가 없습니다'}), 400
+    conn = get_conn()
+    try:
+        if 'name' in fields:
+            dup = conn.execute('SELECT id FROM members WHERE name=? AND id<>?', (fields['name'], mid)).fetchone()
+            if dup:
+                return jsonify({'error': f"이미 같은 이름의 회원이 있습니다: {fields['name']}"}), 400
+        sets = ', '.join(f'{k}=?' for k in fields.keys()) + ', updated_at=?'
+        params = list(fields.values()) + [datetime.now().isoformat(), mid]
+        conn.execute(f'UPDATE members SET {sets} WHERE id=?', params)
+        conn.commit()
+        row = conn.execute('SELECT * FROM members WHERE id=?', (mid,)).fetchone()
+        return jsonify({'ok': True, 'member': dict(row) if row else None})
+    finally:
+        conn.close()
+
+
 # ══════════════════════════════════════════════════════════════════
 #  총 판매품 리스트 (거래명세표 '판매품 리스트' 시트 백업)  ★ v17
 # ══════════════════════════════════════════════════════════════════
@@ -734,6 +794,42 @@ def products_download():
     fname = f'판매품리스트_{datetime.now().strftime("%Y%m%d")}.xlsx'
     return send_file(output, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/api/products/<int:pid>', methods=['PUT', 'PATCH'])
+def products_update(pid):
+    """판매품 한 건 수정 (이름/가격/잔여/번호)"""
+    data = request.get_json(silent=True) or {}
+    fields = {}
+    if 'item_name' in data: fields['item_name'] = str(data['item_name'] or '').strip()
+    if 'price' in data:
+        try:
+            fields['price'] = int(data['price']) if data['price'] not in (None, '') else None
+        except Exception:
+            return jsonify({'error': '가격이 숫자가 아닙니다'}), 400
+    if 'remaining' in data: fields['remaining'] = str(data['remaining'] or '').strip()
+    if 'item_no' in data: fields['item_no'] = str(data['item_no'] or '').strip()
+    if not fields:
+        return jsonify({'error': '수정할 필드가 없습니다'}), 400
+    conn = get_conn()
+    try:
+        sets = ', '.join(f'{k}=?' for k in fields.keys())
+        params = list(fields.values()) + [pid]
+        conn.execute(f'UPDATE product_catalog SET {sets} WHERE id=?', params)
+        conn.commit()
+        row = conn.execute('SELECT * FROM product_catalog WHERE id=?', (pid,)).fetchone()
+        return jsonify({'ok': True, 'product': dict(row) if row else None})
+    finally:
+        conn.close()
+
+
+@app.route('/api/products/<int:pid>', methods=['DELETE'])
+def products_delete(pid):
+    conn = get_conn()
+    conn.execute('DELETE FROM product_catalog WHERE id=?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 
 @app.route('/api/products/upload', methods=['POST'])
