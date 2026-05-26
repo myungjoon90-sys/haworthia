@@ -164,15 +164,34 @@ def extract_order_info(iorder):
     else:
         name = raw_name
 
-    # 결제 금액: payment 객체 안에서 추출
-    amount = int(
-        payment.get("price") or
-        payment.get("pay_price") or
-        payment.get("total_price") or
-        payment.get("payment_price") or
-        iorder.get("pay_price") or
-        iorder.get("total_price") or 0
-    )
+    # 결제 금액: ⭐ payment.pay_price = 실제 결제금액 (상품+배송비-할인)
+    #   payment.price 는 상품금액만이라 배송비가 빠진다 → fallback으로만 사용
+    #   pay_price 없으면 price + delivery_price 로 보정
+    pay_price_v = (payment.get("pay_price") or payment.get("payment_price")
+                   or payment.get("total_price"))
+    if not pay_price_v:
+        base = payment.get("price") or iorder.get("price") or 0
+        ship = (payment.get("delivery_price") or payment.get("shipping_price")
+                or payment.get("deliv_price") or iorder.get("delivery_price") or 0)
+        try:
+            base = int(base); ship = int(ship)
+        except Exception:
+            base = 0; ship = 0
+        pay_price_v = base + ship if base else 0
+
+    try:
+        amount = int(pay_price_v or 0)
+    except (TypeError, ValueError):
+        amount = 0
+
+    # 진단: price와 pay_price가 다르면 (=배송비 있음) 어느 값이 쓰였는지 로그
+    try:
+        _p = payment.get("price"); _pp = payment.get("pay_price")
+        _dp = payment.get("delivery_price")
+        if _p and _pp and int(_p) != int(_pp):
+            logger.info(f"  💳 결제금액: price={_p} pay_price={_pp} delivery={_dp} → 사용={amount}")
+    except Exception:
+        pass
 
     # 결제 시각
     paid_at = (
