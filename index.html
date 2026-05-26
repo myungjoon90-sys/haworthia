@@ -7,6 +7,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
+
+.ed { display:inline-block; min-width:60px; padding:2px 6px; border-radius:4px; cursor:text; }
+.ed:hover { background:rgba(255,255,255,0.06); }
+.ed:focus { outline:1px solid var(--green); background:rgba(255,255,255,0.08); }
+
 :root {
   --bg: #0d1117; --surface: #161b22; --surface2: #1c2330;
   --border: #30363d; --border2: #21262d;
@@ -18,7 +23,7 @@
   --text: #e6edf3; --muted: #7d8590; --dim: #484f58;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: 'Noto Sans KR', sans-serif; font-size:16px; min-height: 100vh; }
+body { background: var(--bg); color: var(--text); font-family: 'Noto Sans KR', sans-serif; font-size:15px; min-height: 100vh; }
 
 /* ─── Header ─────────────────────────────────────────────────── */
 header {
@@ -31,11 +36,11 @@ header {
   backdrop-filter: blur(8px);
   z-index: 200;
 }
-.logo { width: 30px; height: 30px; background: linear-gradient(135deg,#3fb950,#2d8a45); border-radius: 7px; display:flex;align-items:center;justify-content:center; font-size:17px; }
-header h1 { font-size:17px; font-weight: 600; letter-spacing: -.3px; }
+.logo { width: 30px; height: 30px; background: linear-gradient(135deg,#3fb950,#2d8a45); border-radius: 7px; display:flex;align-items:center;justify-content:center; font-size:16px; }
+header h1 { font-size:16px; font-weight: 600; letter-spacing: -.3px; }
 .server-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); margin-left: auto; transition: background .3s; }
 .server-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.server-label { font-size:13px; color: var(--muted); }
+.server-label { font-size:12px; color: var(--muted); }
 
 /* ─── Nav ────────────────────────────────────────────────────── */
 nav {
@@ -47,7 +52,7 @@ nav {
 }
 .nav-item {
   padding: 12px 16px;
-  font-size:15px;
+  font-size:14px;
   cursor: pointer;
   white-space: nowrap;
   color: var(--muted);
@@ -60,7 +65,7 @@ nav {
 .nav-badge {
   background: var(--red); color: #fff;
   border-radius: 10px; padding: 1px 6px;
-  font-size:12px; font-weight: 700;
+  font-size:11px; font-weight: 700;
   display: none;
 }
 .nav-badge.show { display: inline-block; }
@@ -72,7 +77,7 @@ nav {
 
 /* ─── Section title ──────────────────────────────────────────── */
 .sec-title {
-  font-size:13px; font-weight: 500; color: var(--muted);
+  font-size:12px; font-weight: 500; color: var(--muted);
   text-transform: uppercase; letter-spacing: .8px;
   margin-bottom: 12px;
   display: flex; align-items: center; gap: 8px;
@@ -92,7 +97,7 @@ nav {
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
-.card-head h3 { font-size:15px; font-weight: 500; }
+.card-head h3 { font-size:14px; font-weight: 500; }
 .card-body { padding: 16px; }
 
 /* ─── Upload zone ────────────────────────────────────────────── */
@@ -108,9 +113,9 @@ nav {
 .upload-zone:hover, .upload-zone.drag-over { border-color: var(--green); background: rgba(63,185,80,.04); }
 .upload-zone.has-file { border-color: var(--green); border-style: solid; }
 .upload-zone input[type=file] { position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%; }
-.upload-icon { font-size:34px; margin-bottom: 8px; }
-.upload-label { font-size:16px; font-weight: 500; margin-bottom: 4px; }
-.upload-hint { font-size:14px; color: var(--muted); }
+.upload-icon { font-size:33px; margin-bottom: 8px; }
+.upload-label { font-size:15px; font-weight: 500; margin-bottom: 4px; }
+.upload-hint { font-size:13px; color: var(--muted); }
 
 /* ─── Stat grid ──────────────────────────────────────────────── */
 .stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 20px; }
@@ -123,19 +128,19 @@ nav {
 .stat-card.yellow { border-color: var(--yellow-border); background: rgba(210,153,34,.05); }
 .stat-card.red { border-color: var(--red-border); background: rgba(248,81,73,.05); }
 .stat-card.blue { border-color: var(--blue-border); background: rgba(88,166,255,.05); }
-.stat-val { font-size:30px; font-weight: 700; font-family:'DM Mono',monospace; line-height:1; margin-bottom:4px; }
+.stat-val { font-size:29px; font-weight: 700; font-family:'DM Mono',monospace; line-height:1; margin-bottom:4px; }
 .stat-card.green .stat-val { color: var(--green); }
 .stat-card.yellow .stat-val { color: var(--yellow); }
 .stat-card.red .stat-val { color: var(--red); }
 .stat-card.blue .stat-val { color: var(--blue); }
-.stat-lbl { font-size:13px; color: var(--muted); }
+.stat-lbl { font-size:12px; color: var(--muted); }
 
 /* ─── Table ──────────────────────────────────────────────────── */
 .tbl-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size:14px; }
+table { width: 100%; border-collapse: collapse; font-size:13px; }
 th {
   padding: 9px 12px; text-align: left;
-  font-size:12px; font-weight: 500; color: var(--muted);
+  font-size:11px; font-weight: 500; color: var(--muted);
   text-transform: uppercase; letter-spacing: .5px;
   border-bottom: 1px solid var(--border);
   background: var(--bg); white-space: nowrap;
@@ -147,20 +152,20 @@ tr:hover td { background: var(--surface2); }
 /* ─── Badges ─────────────────────────────────────────────────── */
 .badge {
   display: inline-block; border-radius: 4px; padding: 2px 8px;
-  font-size:13px; font-weight: 500; font-family:'Noto Sans KR',sans-serif;
+  font-size:12px; font-weight: 500; font-family:'Noto Sans KR',sans-serif;
 }
 .badge-ok { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-border); }
 .badge-pending { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow-border); }
 .badge-mismatch { background: var(--red-dim); color: var(--red); border: 1px solid var(--red-border); }
 .badge-card { background: var(--blue-dim); color: var(--blue); border: 1px solid var(--blue-border); }
 .badge-transfer { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-border); }
-.tag-nick { background: var(--blue-dim); color: var(--blue); border:1px solid var(--blue-border); border-radius:4px; padding:2px 8px; font-size:14px; font-family:'DM Mono',monospace; display:inline-block; }
-.tag-real { background: var(--green-dim); color: var(--green); border:1px solid var(--green-border); border-radius:4px; padding:2px 8px; font-size:14px; font-family:'DM Mono',monospace; display:inline-block; }
+.tag-nick { background: var(--blue-dim); color: var(--blue); border:1px solid var(--blue-border); border-radius:4px; padding:2px 8px; font-size:13px; font-family:'DM Mono',monospace; display:inline-block; }
+.tag-real { background: var(--green-dim); color: var(--green); border:1px solid var(--green-border); border-radius:4px; padding:2px 8px; font-size:13px; font-family:'DM Mono',monospace; display:inline-block; }
 
 /* ─── Buttons ────────────────────────────────────────────────── */
 .btn {
   padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer;
-  font-family: 'Noto Sans KR', sans-serif; font-size:15px; font-weight: 500;
+  font-family: 'Noto Sans KR', sans-serif; font-size:14px; font-weight: 500;
   transition: all .15s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
 }
 .btn-primary { background: var(--green); color: #000; }
@@ -170,7 +175,7 @@ tr:hover td { background: var(--surface2); }
 .btn-secondary:hover { background: var(--border); }
 .btn-blue { background: var(--blue); color: #000; }
 .btn-blue:hover { background: #79bbff; }
-.btn-danger { background: none; color: var(--red); border: 1px solid transparent; padding: 4px 8px; font-size:14px; }
+.btn-danger { background: none; color: var(--red); border: 1px solid transparent; padding: 4px 8px; font-size:13px; }
 .btn-danger:hover { background: var(--red-dim); border-color: var(--red); }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn-row.right { justify-content: flex-end; margin-top: 16px; }
@@ -178,17 +183,17 @@ tr:hover td { background: var(--surface2); }
 /* ─── Form ───────────────────────────────────────────────────── */
 .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: flex-end; }
 .form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
-.form-group label { font-size:13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+.form-group label { font-size:12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
 input[type=text], input[type=date], select {
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
   color: var(--text); padding: 8px 12px;
-  font-family: 'Noto Sans KR', sans-serif; font-size:15px; width: 100%;
+  font-family: 'Noto Sans KR', sans-serif; font-size:14px; width: 100%;
 }
 input:focus, select:focus { outline: none; border-color: var(--green); }
 input::placeholder { color: var(--dim); }
 
 /* ─── Alert ──────────────────────────────────────────────────── */
-.alert { border-radius: 8px; padding: 12px 16px; font-size:15px; margin-bottom: 16px; display: flex; gap: 10px; align-items: flex-start; }
+.alert { border-radius: 8px; padding: 12px 16px; font-size:14px; margin-bottom: 16px; display: flex; gap: 10px; align-items: flex-start; }
 .alert-warn { background: var(--yellow-dim); border: 1px solid var(--yellow-border); color: var(--yellow); }
 .alert-info { background: var(--blue-dim); border: 1px solid var(--blue-border); color: var(--blue); }
 .alert-ok { background: var(--green-dim); border: 1px solid var(--green-border); color: var(--green); }
@@ -203,19 +208,19 @@ input::placeholder { color: var(--dim); }
   padding:14px 16px 18px; background:#fff;
 }
 .invoice-title {
-  text-align:center; font-size:24px; font-weight:800;
+  text-align:center; font-size:23px; font-weight:800;
   padding:8px 0 10px; border-bottom:2px solid #2d3e50;
   margin-bottom:8px; color:#1f2933;
 }
 .invoice-date-row {
   display:flex; justify-content:flex-end; align-items:center;
-  font-size:15px; margin-bottom:6px; gap:8px;
+  font-size:14px; margin-bottom:6px; gap:8px;
 }
 .invoice-date-row .ymd {
   background:#a9d08e; padding:3px 8px; border-radius:3px; color:#000; font-weight:600;
 }
 .invoice-table {
-  width:100%; border-collapse:collapse; font-size:15px;
+  width:100%; border-collapse:collapse; font-size:14px;
 }
 .invoice-table th, .invoice-table td {
   border:1px solid #b0b0b0; padding:5px 8px; text-align:center; color:#000;
@@ -227,23 +232,23 @@ input::placeholder { color: var(--dim); }
   background:#e2efda; font-weight:500;
 }
 .invoice-table tr.total-row td {
-  background:#f5f5f5; color:#c00; font-weight:700; font-size:16px; padding:8px;
+  background:#f5f5f5; color:#c00; font-weight:700; font-size:15px; padding:8px;
 }
 .invoice-footer {
   margin-top:12px; padding:10px 8px; text-align:center;
-  font-size:14px; color:#222; line-height:1.55;
+  font-size:13px; color:#222; line-height:1.55;
   border-top:1px solid #cfd8dc;
 }
 .invoice-footer .thanks { font-weight:700; margin-bottom:6px; }
-.invoice-footer .small { font-size:13px; color:#555; }
+.invoice-footer .small { font-size:12px; color:#555; }
 .invoice-card-head {
   padding:8px 12px; background:#f5f7fa; border-bottom:1px solid #e0e0e0;
   display:flex; justify-content:space-between; align-items:center;
 }
-.invoice-card-head .name { font-weight:700; font-size:16px; color:#1f2933; }
-.invoice-card-head .total { font-size:15px; color:#c00; font-weight:700; }
+.invoice-card-head .name { font-weight:700; font-size:15px; color:#1f2933; }
+.invoice-card-head .total { font-size:14px; color:#c00; font-weight:700; }
 .invoice-png-btn {
-  padding:4px 10px; font-size:14px; background:#3b82f6; color:#fff;
+  padding:4px 10px; font-size:13px; background:#3b82f6; color:#fff;
   border:none; border-radius:4px; cursor:pointer;
 }
 .invoice-png-btn:hover { background:#2563eb; }
@@ -256,12 +261,12 @@ input::placeholder { color: var(--dim); }
   display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
 }
 .session-item:hover { border-color: var(--green-border); }
-.session-name { font-size:15px; font-weight: 500; margin-bottom: 4px; }
-.session-meta { font-size:14px; color: var(--muted); font-family: 'DM Mono', monospace; }
+.session-name { font-size:14px; font-weight: 500; margin-bottom: 4px; }
+.session-meta { font-size:13px; color: var(--muted); font-family: 'DM Mono', monospace; }
 .session-prog { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .prog-bar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; max-width: 200px; }
 .prog-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width .4s; }
-.prog-label { font-size:13px; color: var(--muted); font-family: 'DM Mono', monospace; }
+.prog-label { font-size:12px; color: var(--muted); font-family: 'DM Mono', monospace; }
 
 /* ─── Spinner ────────────────────────────────────────────────── */
 .spinner { width:14px;height:14px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite;display:inline-block; }
@@ -271,7 +276,7 @@ input::placeholder { color: var(--dim); }
 .toast-wrap { position:fixed;bottom:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px; }
 .toast {
   background: var(--surface2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 10px 14px; font-size:15px; max-width: 280px;
+  border-radius: 8px; padding: 10px 14px; font-size:14px; max-width: 280px;
   animation: slideIn .2s ease; display: flex; align-items: center; gap: 8px;
 }
 .toast.ok { border-color: var(--green-border); }
@@ -280,8 +285,8 @@ input::placeholder { color: var(--dim); }
 
 /* ─── Empty state ────────────────────────────────────────────── */
 .empty { text-align: center; padding: 40px 20px; color: var(--muted); }
-.empty .empty-icon { font-size:38px; margin-bottom: 10px; }
-.empty p { font-size:15px; }
+.empty .empty-icon { font-size:37px; margin-bottom: 10px; }
+.empty p { font-size:14px; }
 
 /* ─── 7일 타임라인 ───────────────────────────────────────────── */
 .timeline-wrap {
@@ -289,7 +294,7 @@ input::placeholder { color: var(--dim); }
   border-radius: 10px; padding: 20px; margin-bottom: 16px;
 }
 .timeline-title {
-  font-size:15px; font-weight: 500; margin-bottom: 16px;
+  font-size:14px; font-weight: 500; margin-bottom: 16px;
   display: flex; align-items: center; justify-content: space-between;
 }
 .timeline-row {
@@ -299,13 +304,13 @@ input::placeholder { color: var(--dim); }
   display: flex; flex-direction: column; align-items: center; gap: 6px;
 }
 .tl-date {
-  font-size:12px; color: var(--muted); font-family: 'DM Mono', monospace;
+  font-size:11px; color: var(--muted); font-family: 'DM Mono', monospace;
   text-align: center;
 }
 .tl-dot {
   width: 100%; height: 48px; border-radius: 8px;
   display: flex; flex-direction: column; align-items: center;
-  justify-content: center; font-size:20px; position: relative;
+  justify-content: center; font-size:19px; position: relative;
   transition: all .2s; cursor: default;
 }
 .tl-dot.future {
@@ -325,7 +330,7 @@ input::placeholder { color: var(--dim); }
   background: var(--yellow-dim); border: 1px solid var(--yellow-border);
 }
 .tl-label {
-  font-size:12px; text-align: center; line-height: 1.3;
+  font-size:11px; text-align: center; line-height: 1.3;
   font-family: 'DM Mono', monospace;
 }
 .tl-label.ok { color: var(--green); }
@@ -355,13 +360,13 @@ input::placeholder { color: var(--dim); }
   width: 32px; height: 32px; min-width: 32px;
   border-radius: 50%; background: var(--border);
   display: flex; align-items: center; justify-content: center;
-  font-size:15px; font-weight: 700; font-family: 'DM Mono', monospace;
+  font-size:14px; font-weight: 700; font-family: 'DM Mono', monospace;
   transition: background .2s, color .2s;
 }
 .setup-block.done .setup-circle { background: var(--green); color: #000; }
-.setup-title { font-size:16px; font-weight: 600; }
-.setup-sub { font-size:14px; color: var(--muted); margin-top: 2px; }
-.setup-check { margin-left: auto; font-size:14px; color: var(--green); font-weight: 500; }
+.setup-title { font-size:15px; font-weight: 600; }
+.setup-sub { font-size:13px; color: var(--muted); margin-top: 2px; }
+.setup-check { margin-left: auto; font-size:13px; color: var(--green); font-weight: 500; }
 .setup-body {
   padding: 0 20px 20px 20px;
   border-top: 1px solid var(--border);
@@ -372,23 +377,23 @@ input::placeholder { color: var(--dim); }
   background: var(--bg); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 14px;
 }
-.copy-label { font-size:13px; color: var(--muted); margin-bottom: 8px; font-weight: 500; }
+.copy-label { font-size:12px; color: var(--muted); margin-bottom: 8px; font-weight: 500; }
 .copy-row { display: flex; align-items: center; gap: 8px; }
 .copy-val {
   flex: 1; background: var(--surface2); border: 1px solid var(--border);
   border-radius: 5px; padding: 7px 10px;
-  font-family: 'DM Mono', monospace; font-size:14px;
+  font-family: 'DM Mono', monospace; font-size:13px;
   color: var(--green); word-break: break-all;
 }
 .copy-btn {
   background: var(--surface2); border: 1px solid var(--border);
   border-radius: 5px; padding: 6px 12px;
-  font-size:14px; color: var(--text); cursor: pointer;
+  font-size:13px; color: var(--text); cursor: pointer;
   white-space: nowrap; transition: all .15s; font-family: 'Noto Sans KR', sans-serif;
 }
 .copy-btn:hover { background: var(--green); color: #000; border-color: var(--green); }
 .copy-btn.copied { background: var(--green-dim); color: var(--green); border-color: var(--green-border); }
-code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'DM Mono', monospace; font-size:14px; }</style>
+code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'DM Mono', monospace; font-size:13px; }</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
@@ -456,7 +461,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
           </button>
         </div>
       </div>
-      <div style="font-size:14px;color:var(--muted);margin-top:10px;">
+      <div style="font-size:13px;color:var(--muted);margin-top:10px;">
         📌 등록하면 <strong style="color:var(--text)">방송일 +1일부터 7일간</strong> 30분마다 아임웹 카드결제 + SMS 입금을 자동 확인합니다.
       </div>
     </div>
@@ -466,7 +471,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="sec-title">💰 은행 입금내역 수동 업로드 (선택)</div>
   <div class="card" style="margin-bottom:16px;">
     <div class="card-body">
-      <p style="color:var(--muted);font-size:15px;margin-bottom:10px;">
+      <p style="color:var(--muted);font-size:14px;margin-bottom:10px;">
         은행 입금내역 엑셀(.xls/.xlsx)을 선택한 뒤 <strong style="color:var(--green)">✓ 수동입금확인</strong> 한 번만 누르면 됩니다.
         은행 엑셀 파싱+매칭 → 아임웹 카드결제 확인을 자동 실행합니다.
         이름·금액이 정확히 일치하면 입금확인으로, 부분 일치는 의심후보로 들어갑니다.
@@ -478,7 +483,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-primary" onclick="submitBankUpload()" id="bankUploadBtn" style="align-self:flex-end;">⬆️ 은행 엑셀 업로드</button>
         <button class="btn btn-blue" onclick="runManualCheckBank()" id="manualCheckBankBtn" style="align-self:flex-end;" title="은행 엑셀 파싱+매칭 + 아임웹 카드결제 확인까지 한 번에 실행">✓ 수동입금확인 (전체 실행)</button>
       </div>
-      <div id="bankResult" style="margin-top:8px;font-size:15px;color:var(--muted);"></div>
+      <div id="bankResult" style="margin-top:8px;font-size:14px;color:var(--muted);"></div>
     </div>
   </div>
 
@@ -486,10 +491,10 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="timeline-wrap" id="timelineWrap" style="display:none;">
     <div class="timeline-title">
       <span>📅 7일 자동확인 진행현황</span>
-      <span style="font-size:13px;color:var(--muted);">30분마다 자동 실행</span>
+      <span style="font-size:12px;color:var(--muted);">30분마다 자동 실행</span>
     </div>
     <div class="timeline-row" id="timelineRow"></div>
-    <div style="display:flex;gap:16px;margin-top:12px;font-size:13px;color:var(--muted);flex-wrap:wrap;">
+    <div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted);flex-wrap:wrap;">
       <span>🟢 정상완료</span>
       <span>🔴 오류발생</span>
       <span>🟡 미실행</span>
@@ -521,13 +526,13 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 
   <!-- 탭 -->
   <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;">
-    <div class="inner-tab active" id="tab-pending" onclick="switchInnerTab('pending')" style="padding:10px 20px;cursor:pointer;font-size:15px;font-weight:500;border-bottom:2px solid var(--yellow);color:var(--yellow);">
+    <div class="inner-tab active" id="tab-pending" onclick="switchInnerTab('pending')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid var(--yellow);color:var(--yellow);">
       ⏳ 미확인 대기 <span id="pending-count-badge" class="nav-badge show" style="background:var(--yellow);"></span>
     </div>
-    <div class="inner-tab" id="tab-candidates" onclick="switchInnerTab('candidates')" style="padding:10px 20px;cursor:pointer;font-size:15px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+    <div class="inner-tab" id="tab-candidates" onclick="switchInnerTab('candidates')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
       🤔 의심가는 후보 <span id="candidates-count-badge" class="nav-badge" style="background:#f59e0b;"></span>
     </div>
-    <div class="inner-tab" id="tab-confirmed" onclick="switchInnerTab('confirmed')" style="padding:10px 20px;cursor:pointer;font-size:15px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+    <div class="inner-tab" id="tab-confirmed" onclick="switchInnerTab('confirmed')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
       ✅ 입금확인
     </div>
   </div>
@@ -538,7 +543,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <div class="card-head">
         <h3>⏳ 입금 대기 중인 구매자</h3>
         <div class="btn-row">
-          <div style="font-size:14px;color:var(--muted);">SMS 또는 카드결제 확인 시 자동으로 입금확인으로 이동됩니다</div>
+          <div style="font-size:13px;color:var(--muted);">SMS 또는 카드결제 확인 시 자동으로 입금확인으로 이동됩니다</div>
           <button class="btn btn-primary" onclick="bulkAutoConfirm()" id="bulkAutoConfirmBtn">✅ 수동 입금확인</button>
         </div>
       </div>
@@ -561,7 +566,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     <div class="card">
       <div class="card-head">
         <h3>🤔 의심가는 후보 (이름이 100% 일치하지 않거나 금액만 일치)</h3>
-        <div style="font-size:14px;color:var(--muted);">[✅ 확인] 누르면 입금확인 처리. [❌ 거절]은 후보만 닫음.</div>
+        <div style="font-size:13px;color:var(--muted);">[✅ 확인] 누르면 입금확인 처리. [❌ 거절]은 후보만 닫음.</div>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -614,7 +619,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="sec-title">📷 구매자별 거래명세서 PNG</div>
   <div class="card" style="margin-bottom:16px;">
     <div class="card-body">
-      <p style="color:var(--muted);font-size:15px;margin-bottom:10px;">
+      <p style="color:var(--muted);font-size:14px;margin-bottom:10px;">
         업로드된 거래명세표를 구매자별로 필터링해 캡처용 이미지로 만듭니다.
         각 구매자 카드의 [📷 PNG 저장] 버튼을 누르거나, 우측 상단의 [📦 전체 ZIP] 버튼으로 전부 한꺼번에 받을 수 있어요.
       </p>
@@ -635,7 +640,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <!-- 📦 식물 보관 (식물보관 상태인 구매자) -->
   <div class="sec-title" style="margin-top:20px;display:flex;justify-content:space-between;align-items:center;">
     <span>📦 식물 보관 중인 구매자</span>
-    <div class="btn-row" style="font-size:14px;">
+    <div class="btn-row" style="font-size:13px;">
       <button class="btn btn-secondary" onclick="downloadBuyerStatus()" title="식물 보관/배송완료 상태 백업 (서버 초기화 대비)">⬇ 백업</button>
       <button class="btn btn-secondary" onclick="document.getElementById('statusImportInput').click()" title="백업 CSV로 복원">⬆ 복원</button>
       <input type="file" id="statusImportInput" accept=".csv,.txt" style="display:none;" onchange="uploadBuyerStatus(this.files)">
@@ -643,7 +648,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   </div>
   <div class="card" style="margin-bottom:16px;border-color:#f59e0b;">
     <div class="card-body">
-      <p style="color:var(--muted);font-size:15px;margin-bottom:10px;">
+      <p style="color:var(--muted);font-size:14px;margin-bottom:10px;">
         [📦 식물 보관] 누르면 여기에 보관됩니다. 배송 준비되면 [🚚 배송 완료]를 눌러서 목록에서 제외하세요.
         <br><strong>서버가 초기화돼도 잃지 않도록 [⬇ 백업]으로 주기적으로 CSV를 받아두세요.</strong>
       </p>
@@ -662,10 +667,10 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="card" style="margin-bottom:16px;">
     <div class="card-head">
       <h3>📇 회원명단 (이름 → 전화번호/주소)</h3>
-      <div style="font-size:14px;color:var(--muted);">입금확인 후 엑셀 다운로드 시 자동으로 매핑됨</div>
+      <div style="font-size:13px;color:var(--muted);">입금확인 후 엑셀 다운로드 시 자동으로 매핑됨</div>
     </div>
     <div class="card-body">
-      <p style="color:var(--muted);font-size:15px;margin-bottom:12px;">
+      <p style="color:var(--muted);font-size:14px;margin-bottom:12px;">
         엑셀 양식: <strong style="color:var(--text)">이름</strong> / <strong style="color:var(--text)">전화번호</strong> / <strong style="color:var(--text)">우편번호</strong> / <strong style="color:var(--text)">받는분주소(전체, 분할)</strong> / <strong style="color:var(--text)">배송메세지1</strong>
       </p>
       <div class="form-row" style="gap:8px;flex-wrap:wrap;">
@@ -674,18 +679,25 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-blue" onclick="downloadMembers()">⬇ 회원명단 다운로드</button>
         <button class="btn btn-secondary" onclick="loadMembers()">🔄 새로고침</button>
       </div>
-      <div id="membersUploadResult" style="margin-top:8px;font-size:15px;color:var(--muted);"></div>
+      <div id="membersUploadResult" style="margin-top:8px;font-size:14px;color:var(--muted);"></div>
     </div>
   </div>
 
   <div class="card">
     <div class="card-head">
-      <h3>👥 등록된 회원 <span id="members-count" style="color:var(--muted);font-size:15px;">(0명)</span></h3>
+      <h3>👥 등록된 회원 <span id="members-count" style="color:var(--muted);font-size:14px;">(0명)</span></h3>
+      <input type="text" id="membersSearch" oninput="filterMembers()" placeholder="🔍 이름/전화/주소 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:240px;">
     </div>
+    <p style="font-size:13px;color:var(--muted);margin:0 16px 8px;">💡 각 칸을 클릭하면 바로 수정 가능 (자동저장)</p>
     <div class="tbl-wrap">
-      <table>
+      <table style="table-layout:fixed;width:100%;">
         <thead><tr>
-          <th>이름</th><th>전화번호</th><th>우편번호</th><th>받는분주소</th><th>배송메세지</th><th style="width:60px;">삭제</th>
+          <th style="width:90px;">이름</th>
+          <th style="width:120px;">전화번호</th>
+          <th style="width:90px;">우편번호</th>
+          <th>받는분주소</th>
+          <th style="width:160px;">배송메세지</th>
+          <th style="width:50px;">삭제</th>
         </tr></thead>
         <tbody id="membersTbody">
           <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">등록된 회원이 없습니다 — 엑셀을 업로드하세요</td></tr>
@@ -702,10 +714,10 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="card" style="margin-bottom:16px;">
     <div class="card-head">
       <h3>📚 총 판매품 리스트 (거래명세표 '판매품 리스트' 시트 백업)</h3>
-      <div style="font-size:14px;color:var(--muted);">거래명세표 업로드 시 자동 저장 + 수동 업로드/다운로드 가능</div>
+      <div style="font-size:13px;color:var(--muted);">거래명세표 업로드 시 자동 저장 + 수동 업로드/다운로드 가능</div>
     </div>
     <div class="card-body">
-      <p style="color:var(--muted);font-size:15px;margin-bottom:12px;">
+      <p style="color:var(--muted);font-size:14px;margin-bottom:12px;">
         거래명세표 등록 시 '판매품 리스트' 시트가 자동으로 백업됩니다. 별도 백업 파일을 올리고 싶으면 아래에서 업로드/다운로드 가능.
       </p>
       <div class="form-row" style="gap:8px;flex-wrap:wrap;">
@@ -714,25 +726,28 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-blue" onclick="downloadCatalog()">⬇ 판매품 다운로드 (전체)</button>
         <button class="btn btn-secondary" onclick="loadCatalog()">🔄 새로고침</button>
       </div>
-      <div id="catalogUploadResult" style="margin-top:8px;font-size:15px;color:var(--muted);"></div>
+      <div id="catalogUploadResult" style="margin-top:8px;font-size:14px;color:var(--muted);"></div>
     </div>
   </div>
 
   <div class="card">
     <div class="card-head">
-      <h3>🌱 등록된 판매품 <span id="catalog-count" style="color:var(--muted);font-size:15px;">(0건)</span></h3>
+      <h3>🌱 등록된 판매품 <span id="catalog-count" style="color:var(--muted);font-size:14px;">(0건)</span></h3>
+      <input type="text" id="catalogSearch" oninput="filterCatalog()" placeholder="🔍 이름/번호/날짜 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:240px;">
     </div>
+    <p style="font-size:13px;color:var(--muted);margin:0 16px 8px;">💡 이름/판매가격/잔여갯수 칸을 클릭하면 바로 수정 가능 (자동저장)</p>
     <div class="tbl-wrap">
-      <table>
+      <table style="table-layout:fixed;width:100%;">
         <thead><tr>
           <th style="width:100px;">라이브 날짜</th>
-          <th style="width:80px;">번호</th>
+          <th style="width:60px;">번호</th>
           <th>하월시아 이름</th>
-          <th style="width:100px;">판매가격</th>
-          <th style="width:80px;">잔여갯수</th>
+          <th style="width:110px;">판매가격</th>
+          <th style="width:70px;">잔여갯수</th>
+          <th style="width:50px;">삭제</th>
         </tr></thead>
         <tbody id="catalogTbody">
-          <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">등록된 판매품이 없습니다</td></tr>
+          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">등록된 판매품이 없습니다</td></tr>
         </tbody>
       </table>
     </div>
@@ -775,7 +790,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 
   <div class="sec-title">
     <span style="color:#16a34a;">✅ 동일인 매핑</span>
-    <span id="mappingCount" style="font-size:14px;color:var(--muted);margin-left:8px;"></span>
+    <span id="mappingCount" style="font-size:13px;color:var(--muted);margin-left:8px;"></span>
   </div>
   <div class="card">
     <div class="tbl-wrap">
@@ -792,7 +807,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 
   <div class="sec-title" style="margin-top:20px;">
     <span style="color:#ef4444;">🚫 불일치 매핑 (의심후보에서 [거절]한 항목 — 다시는 후보로 안 뜸)</span>
-    <span id="negMappingCount" style="font-size:14px;color:var(--muted);margin-left:8px;"></span>
+    <span id="negMappingCount" style="font-size:13px;color:var(--muted);margin-left:8px;"></span>
   </div>
   <div class="card" style="border-color:rgba(239,68,68,0.3);">
     <div class="tbl-wrap">
@@ -1038,8 +1053,8 @@ function renderTimelineDays(row, days, logMap) {
 
     return `<div class="tl-day">
       <div class="tl-date">${wd}<br>${md}</div>
-      <div class="tl-dot ${dotClass}" style="font-size:20px;line-height:48px;">${emoji}</div>
-      <div class="tl-label ${labelClass}" style="white-space:pre;font-size:12px;text-align:center;margin-top:4px;">${label}</div>
+      <div class="tl-dot ${dotClass}" style="font-size:19px;line-height:48px;">${emoji}</div>
+      <div class="tl-label ${labelClass}" style="white-space:pre;font-size:11px;text-align:center;margin-top:4px;">${label}</div>
     </div>`;
   }).join('');
 }
@@ -1056,9 +1071,9 @@ function renderPending(items) {
     <tr data-session="${i.session_id}" data-buyer="${i.buyer_name.replace(/"/g,'&quot;')}">
       <td style="text-align:center;"><input type="checkbox" class="auto-pending-check" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"></td>
       <td><strong>${i.buyer_name}</strong></td>
-      <td style="font-size:13px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
+      <td style="font-size:12px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
-      <td style="font-family:'DM Mono',monospace;font-size:13px;">${i.live_date||'-'}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px;">${i.live_date||'-'}</td>
     </tr>`).join('') +
     `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
       <td colspan="3" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
@@ -1078,10 +1093,10 @@ function renderConfirmed(items) {
   tbody.innerHTML = items.map(i => `
     <tr>
       <td><strong>${i.buyer_name}</strong></td>
-      <td style="font-size:13px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
+      <td style="font-size:12px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
       <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
-      <td style="font-family:'DM Mono',monospace;font-size:13px;">${i.confirmed_at?i.confirmed_at.slice(0,16).replace('T',' '):'-'}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px;">${i.confirmed_at?i.confirmed_at.slice(0,16).replace('T',' '):'-'}</td>
     </tr>`).join('') +
     `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
       <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
@@ -1100,7 +1115,7 @@ function switchInnerTab(tab) {
     const active = (key === tab);
     document.getElementById(s.id).style.display = active ? 'block' : 'none';
     document.getElementById(s.tabId).style.cssText =
-      `padding:10px 20px;cursor:pointer;font-size:15px;font-weight:500;` +
+      `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;` +
       `border-bottom:2px solid ${active ? s.color : 'transparent'};` +
       `color:${active ? s.color : 'var(--muted)'};`;
   });
@@ -1133,17 +1148,17 @@ function renderCandidates(list) {
   const confBadge = (c) => {
     const map = { high: ['#16a34a','높음'], medium: ['#f59e0b','중간'], low: ['#ef4444','낮음'] };
     const [bg, lbl] = map[c] || ['#999', c || '-'];
-    return `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:13px;background:${bg};color:#fff;margin-right:4px;">${lbl}</span>`;
+    return `<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:12px;background:${bg};color:#fff;margin-right:4px;">${lbl}</span>`;
   };
   const srcBadge = (s) => {
-    if (s === 'imweb') return '<span style="padding:2px 6px;border-radius:4px;font-size:13px;background:#3b82f6;color:#fff;">아임웹</span>';
-    if (s === 'sms')   return '<span style="padding:2px 6px;border-radius:4px;font-size:13px;background:#8b5cf6;color:#fff;">SMS</span>';
+    if (s === 'imweb') return '<span style="padding:2px 6px;border-radius:4px;font-size:12px;background:#3b82f6;color:#fff;">아임웹</span>';
+    if (s === 'sms')   return '<span style="padding:2px 6px;border-radius:4px;font-size:12px;background:#8b5cf6;color:#fff;">SMS</span>';
     return s || '-';
   };
   const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString() + '원');
   tb.innerHTML = list.map(c => {
     const paid  = c.paid_name || '-';
-    const paid2 = c.paid_name2 ? ` <span style="color:var(--muted);font-size:13px;">(${c.paid_name2})</span>` : '';
+    const paid2 = c.paid_name2 ? ` <span style="color:var(--muted);font-size:12px;">(${c.paid_name2})</span>` : '';
     const buyer = c.candidate_buyer_name || '<span style="color:var(--muted);">미정</span>';
     const approveDisabled = c.candidate_buyer_name ? '' : 'disabled title="추정 주문이 없어 승인 불가"';
     return `
@@ -1154,11 +1169,11 @@ function renderCandidates(list) {
         <td style="text-align:center;color:var(--muted);">→</td>
         <td>${buyer}</td>
         <td style="font-family:'DM Mono',monospace;">${fmt(c.candidate_amount)}</td>
-        <td style="font-size:14px;color:var(--muted);white-space:normal;word-break:keep-all;line-height:1.5;">${confBadge(c.confidence)}${c.reason || ''}</td>
+        <td style="font-size:13px;color:var(--muted);white-space:normal;word-break:keep-all;line-height:1.5;">${confBadge(c.confidence)}${c.reason || ''}</td>
         <td style="white-space:nowrap;text-align:center;">
-          <button class="btn btn-primary" style="padding:4px 8px;font-size:14px;margin:1px;" onclick="approveCandidate(${c.id})" ${approveDisabled}>✅ 확인</button>
-          <button class="btn" style="padding:4px 8px;font-size:14px;background:#444;color:#fff;margin:1px;" onclick="rejectCandidate(${c.id})" title="동일인 아님으로 매핑">❌ 거절</button>
-          <button class="btn" style="padding:4px 8px;font-size:14px;background:#666;color:#fff;margin:1px;" onclick="deleteCandidate(${c.id})" title="매핑 변동 없이 후보만 삭제">🗑 삭제</button>
+          <button class="btn btn-primary" style="padding:4px 8px;font-size:13px;margin:1px;" onclick="approveCandidate(${c.id})" ${approveDisabled}>✅ 확인</button>
+          <button class="btn" style="padding:4px 8px;font-size:13px;background:#444;color:#fff;margin:1px;" onclick="rejectCandidate(${c.id})" title="동일인 아님으로 매핑">❌ 거절</button>
+          <button class="btn" style="padding:4px 8px;font-size:13px;background:#666;color:#fff;margin:1px;" onclick="deleteCandidate(${c.id})" title="매핑 변동 없이 후보만 삭제">🗑 삭제</button>
         </td>
       </tr>`;
   }).join('');
@@ -1297,12 +1312,12 @@ function renderDeliveryConfirmed(items) {
   tbody.innerHTML = items.map(i => `
     <tr>
       <td><strong>${i.buyer_name}</strong></td>
-      <td style="font-size:13px;color:var(--muted);">${i.item || '-'}</td>
+      <td style="font-size:12px;color:var(--muted);">${i.item || '-'}</td>
       <td style="font-family:'DM Mono',monospace;">${Number(i.amount).toLocaleString()}원</td>
       <td><span class="badge ${payClass[i.pay_type]||'badge-ok'}">${payLabel[i.pay_type]||i.pay_type||'-'}</span></td>
-      <td style="font-family:'DM Mono',monospace;font-size:13px;">${i.confirmed_at ? i.confirmed_at.slice(0,16).replace('T',' ') : '-'}</td>
-      <td style="font-family:'DM Mono',monospace;font-size:13px;">${i.live_date || '-'}</td>
-      <td><button class="btn btn-danger" style="font-size:13px;padding:3px 8px;" onclick="unconfirmOrder(${i.id})">취소</button></td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px;">${i.confirmed_at ? i.confirmed_at.slice(0,16).replace('T',' ') : '-'}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px;">${i.live_date || '-'}</td>
+      <td><button class="btn btn-danger" style="font-size:12px;padding:3px 8px;" onclick="unconfirmOrder(${i.id})">취소</button></td>
     </tr>`).join('') +
     `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
       <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
@@ -1325,9 +1340,9 @@ function renderDeliveryPending(items) {
           style="width:16px;height:16px;cursor:pointer;accent-color:var(--green);">
       </td>
       <td><strong>${i.buyer_name}</strong></td>
-      <td style="font-size:13px;color:var(--muted);max-width:250px;white-space:normal;">${i.items || '-'}</td>
+      <td style="font-size:12px;color:var(--muted);max-width:250px;white-space:normal;">${i.items || '-'}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--yellow);">${Number(i.total_amount).toLocaleString()}원</td>
-      <td style="font-family:'DM Mono',monospace;font-size:13px;">${i.live_date || '-'}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px;">${i.live_date || '-'}</td>
     </tr>`).join('') +
     `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
       <td></td>
@@ -1423,33 +1438,79 @@ function switchDeliveryTab(tab) {
   const isConf = tab === 'confirmed';
   document.getElementById('delivery-confirmed').style.display = isConf ? 'block' : 'none';
   document.getElementById('delivery-pending').style.display   = isConf ? 'none' : 'block';
-  document.getElementById('dtab-confirmed').style.cssText = `padding:10px 20px;cursor:pointer;font-size:15px;font-weight:500;border-bottom:2px solid ${isConf?'var(--green)':'transparent'};color:${isConf?'var(--green)':'var(--muted)'};`;
-  document.getElementById('dtab-pending').style.cssText   = `padding:10px 20px;cursor:pointer;font-size:15px;font-weight:500;border-bottom:2px solid ${!isConf?'var(--yellow)':'transparent'};color:${!isConf?'var(--yellow)':'var(--muted)'};`;
+  document.getElementById('dtab-confirmed').style.cssText = `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid ${isConf?'var(--green)':'transparent'};color:${isConf?'var(--green)':'var(--muted)'};`;
+  document.getElementById('dtab-pending').style.cssText   = `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid ${!isConf?'var(--yellow)':'transparent'};color:${!isConf?'var(--yellow)':'var(--muted)'};`;
 }
 
 // ══════════════════════════════════════════════════════════════════
 // v17: 회원명단
 // ══════════════════════════════════════════════════════════════════
+let _membersAll = [];
+function _esc(s){ return (s||'').toString().replace(/[<>"'&]/g, c=>({"<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","&":"&amp;"})[c]); }
+function _renderMembersFiltered(filtered) {
+  const tb = document.getElementById('membersTbody');
+  document.getElementById('members-count').textContent = `(${filtered.length}/${_membersAll.length}명)`;
+  if (!filtered.length) {
+    tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">검색 결과 없음</td></tr>';
+    return;
+  }
+  tb.innerHTML = filtered.map(m => {
+    const ed = (field, val) => `<span class="ed" contenteditable="true" data-id="${m.id}" data-field="${field}" onblur="saveMemberField(this)">${_esc(val)}</span>`;
+    return `
+      <tr>
+        <td><strong>${ed('name', m.name||'')}</strong></td>
+        <td style="font-family:'DM Mono',monospace;">${ed('phone', m.phone||'')}</td>
+        <td>${ed('postal_code', m.postal_code||'')}</td>
+        <td style="word-break:break-all;white-space:normal;">${ed('address', m.address||'')}</td>
+        <td style="word-break:break-all;white-space:normal;color:var(--muted);">${ed('message', m.message||'')}</td>
+        <td><button class="btn" style="padding:4px 8px;background:#666;color:#fff;" onclick="deleteMember(${m.id})">🗑</button></td>
+      </tr>`;
+  }).join('');
+}
 async function loadMembers() {
   try {
     const r = await fetch(API + '/api/members/list');
-    const list = await r.json();
-    const tb = document.getElementById('membersTbody');
-    document.getElementById('members-count').textContent = `(${list.length}명)`;
-    if (!list.length) {
-      tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">등록된 회원이 없습니다 — 엑셀을 업로드하세요</td></tr>';
+    _membersAll = await r.json();
+    if (!_membersAll.length) {
+      document.getElementById('membersTbody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">등록된 회원이 없습니다 — 엑셀을 업로드하세요</td></tr>';
+      document.getElementById('members-count').textContent = '(0명)';
       return;
     }
-    tb.innerHTML = list.map(m => `
-      <tr>
-        <td><strong>${m.name||''}</strong></td>
-        <td style="font-family:'DM Mono',monospace;">${m.phone||''}</td>
-        <td>${m.postal_code||''}</td>
-        <td style="font-size:14px;">${m.address||''}</td>
-        <td style="font-size:14px;color:var(--muted);">${m.message||''}</td>
-        <td><button class="btn" style="padding:4px 8px;font-size:14px;background:#666;color:#fff;" onclick="deleteMember(${m.id})">🗑</button></td>
-      </tr>`).join('');
+    _renderMembersFiltered(_membersAll);
   } catch(e) { toast('회원명단 불러오기 실패', 'err'); }
+}
+function filterMembers() {
+  const q = (document.getElementById('membersSearch')||{value:''}).value.trim().toLowerCase();
+  if (!q) { _renderMembersFiltered(_membersAll); return; }
+  const f = _membersAll.filter(m =>
+    (m.name||'').toLowerCase().includes(q) ||
+    (m.phone||'').toLowerCase().includes(q) ||
+    (m.address||'').toLowerCase().includes(q)
+  );
+  _renderMembersFiltered(f);
+}
+async function saveMemberField(el) {
+  const id = el.getAttribute('data-id');
+  const field = el.getAttribute('data-field');
+  const val = el.innerText.trim();
+  const orig = _membersAll.find(x => x.id == id) || {};
+  if ((orig[field] || '') === val) return;
+  try {
+    const r = await fetch(API + '/api/members/' + id, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({[field]: val})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const idx = _membersAll.findIndex(x => x.id == id);
+      if (idx >= 0) _membersAll[idx][field] = val;
+      el.style.background = 'rgba(34,197,94,0.15)';
+      setTimeout(() => el.style.background = '', 800);
+    } else {
+      toast('수정 실패: ' + (d.error || ''), 'err');
+      el.innerText = orig[field] || '';
+    }
+  } catch(e) { toast('서버 연결 실패', 'err'); el.innerText = orig[field] || ''; }
 }
 
 function handleMembersFile(files) {
@@ -1500,26 +1561,82 @@ async function deleteMember(id) {
 // ══════════════════════════════════════════════════════════════════
 // v17: 총 판매품 리스트
 // ══════════════════════════════════════════════════════════════════
+let _catalogAll = [];
+function _renderCatalogFiltered(filtered) {
+  const tb = document.getElementById('catalogTbody');
+  document.getElementById('catalog-count').textContent = `(${filtered.length}/${_catalogAll.length}건)`;
+  if (!filtered.length) {
+    tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">검색 결과 없음</td></tr>';
+    return;
+  }
+  const fmtP = (n) => (n == null || n === '' ? '' : Number(n).toLocaleString());
+  tb.innerHTML = filtered.map(p => {
+    const ed = (field, val) => `<span class="ed" contenteditable="true" data-id="${p.id}" data-field="${field}" onblur="saveCatalogField(this)">${_esc(val)}</span>`;
+    return `
+      <tr>
+        <td style="color:var(--muted);">${p.live_date||''}</td>
+        <td style="font-family:'DM Mono',monospace;">${p.item_no||''}</td>
+        <td>${ed('item_name', p.item_name||'')}</td>
+        <td style="font-family:'DM Mono',monospace;text-align:right;">${ed('price', fmtP(p.price))}원</td>
+        <td style="text-align:center;color:var(--muted);">${ed('remaining', p.remaining||'')}</td>
+        <td style="text-align:center;"><button class="btn" style="padding:4px 8px;background:#666;color:#fff;" onclick="deleteCatalogItem(${p.id})">🗑</button></td>
+      </tr>`;
+  }).join('');
+}
 async function loadCatalog() {
   try {
     const r = await fetch(API + '/api/products/list');
-    const list = await r.json();
-    const tb = document.getElementById('catalogTbody');
-    document.getElementById('catalog-count').textContent = `(${list.length}건)`;
-    if (!list.length) {
-      tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">등록된 판매품이 없습니다</td></tr>';
+    _catalogAll = await r.json();
+    if (!_catalogAll.length) {
+      document.getElementById('catalogTbody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">등록된 판매품이 없습니다</td></tr>';
+      document.getElementById('catalog-count').textContent = '(0건)';
       return;
     }
-    const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString() + '원');
-    tb.innerHTML = list.map(p => `
-      <tr>
-        <td style="font-size:14px;color:var(--muted);">${p.live_date||''}</td>
-        <td style="font-family:'DM Mono',monospace;">${p.item_no||''}</td>
-        <td>${p.item_name||''}</td>
-        <td style="font-family:'DM Mono',monospace;text-align:right;">${fmt(p.price)}</td>
-        <td style="text-align:center;color:var(--muted);">${p.remaining||''}</td>
-      </tr>`).join('');
+    _renderCatalogFiltered(_catalogAll);
   } catch(e) { toast('판매품 리스트 불러오기 실패', 'err'); }
+}
+function filterCatalog() {
+  const q = (document.getElementById('catalogSearch')||{value:''}).value.trim().toLowerCase();
+  if (!q) { _renderCatalogFiltered(_catalogAll); return; }
+  const f = _catalogAll.filter(p =>
+    (p.item_name||'').toLowerCase().includes(q) ||
+    (p.item_no||'').toString().toLowerCase().includes(q) ||
+    (p.live_date||'').toLowerCase().includes(q)
+  );
+  _renderCatalogFiltered(f);
+}
+async function saveCatalogField(el) {
+  const id = el.getAttribute('data-id');
+  const field = el.getAttribute('data-field');
+  let val = el.innerText.trim();
+  if (field === 'price') val = val.replace(/[,원\s]/g, '');
+  const orig = _catalogAll.find(x => x.id == id) || {};
+  const origVal = (orig[field] == null ? '' : String(orig[field]));
+  if (origVal === val) return;
+  try {
+    const r = await fetch(API + '/api/products/' + id, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({[field]: val})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const idx = _catalogAll.findIndex(x => x.id == id);
+      if (idx >= 0) _catalogAll[idx][field] = (field==='price') ? (val ? parseInt(val) : null) : val;
+      el.style.background = 'rgba(34,197,94,0.15)';
+      setTimeout(() => el.style.background = '', 800);
+      if (field === 'price') el.innerText = val ? Number(val).toLocaleString() : '';
+    } else {
+      toast('수정 실패: ' + (d.error || ''), 'err');
+      el.innerText = origVal;
+    }
+  } catch(e) { toast('서버 연결 실패', 'err'); el.innerText = origVal; }
+}
+async function deleteCatalogItem(id) {
+  if (!confirm('이 판매품을 삭제하시겠습니까?')) return;
+  try {
+    const r = await fetch(API + '/api/products/' + id, {method:'DELETE'});
+    if (r.ok) { toast('삭제됨', 'ok'); loadCatalog(); }
+  } catch(e) { toast('서버 연결 실패', 'err'); }
 }
 
 function handleCatalogFile(files) {
@@ -1737,7 +1854,7 @@ async function loadBuyerInvoices() {
            <button class="invoice-png-btn" style="background:#16a34a;" onclick="setBuyerStatus(${sess.id}, '${b.replace(/['"\\]/g,'')}', 'shipped')">🚚 배송 완료</button>`;
       card.innerHTML = `
         <div class="invoice-card-head">
-          <span class="name">${b}${isStored ? ' <span style="font-size:13px;background:#f59e0b;color:#fff;padding:1px 6px;border-radius:3px;">보관중</span>' : ''}</span>
+          <span class="name">${b}${isStored ? ' <span style="font-size:12px;background:#f59e0b;color:#fff;padding:1px 6px;border-radius:3px;">보관중</span>' : ''}</span>
           <span class="total">총 ${total.toLocaleString()}원</span>
           ${headButtons}
         </div>
@@ -2042,13 +2159,13 @@ function handleMInvoices(files) {
   mInvoiceFiles = Array.from(files).filter(f => f.name.match(/\.xlsx?$/i));
   document.getElementById('mInvZone').classList.toggle('has-file', mInvoiceFiles.length > 0);
   document.getElementById('mInvList').innerHTML = mInvoiceFiles.map(f =>
-    `<div style="font-size:13px;color:var(--green);margin-top:4px;">📋 ${f.name}</div>`).join('');
+    `<div style="font-size:12px;color:var(--green);margin-top:4px;">📋 ${f.name}</div>`).join('');
 }
 function handleMBank(files) {
   mBankFile = Array.from(files).find(f => f.name.match(/\.xlsx?$/i));
   if (mBankFile) {
     document.getElementById('mBankZone').classList.add('has-file');
-    document.getElementById('mBankList').innerHTML = `<div style="font-size:13px;color:var(--green);margin-top:4px;">🏦 ${mBankFile.name}</div>`;
+    document.getElementById('mBankList').innerHTML = `<div style="font-size:12px;color:var(--green);margin-top:4px;">🏦 ${mBankFile.name}</div>`;
   }
 }
 
@@ -2099,7 +2216,7 @@ async function runManualCheck() {
         <div class="card-head">
           <h3>📋 ${f.name}</h3>
           <div class="btn-row">
-            <span style="font-size:14px;color:var(--muted);">확인 ${ok} / 불일치 ${mis} / 미확인 ${nf}</span>
+            <span style="font-size:13px;color:var(--muted);">확인 ${ok} / 불일치 ${mis} / 미확인 ${nf}</span>
             <button class="btn btn-blue" onclick="dlManual('${f.name}', ${mInvoiceFiles.indexOf(f)})">⬇ 다운로드</button>
           </div>
         </div>
@@ -2235,7 +2352,7 @@ async function loadSmsLog() {
     }
     tbody.innerHTML = items.map(s => `
       <tr>
-        <td style="font-family:'DM Mono',monospace;font-size:13px;">${(s.received_at||'').slice(0,16).replace('T',' ')}</td>
+        <td style="font-family:'DM Mono',monospace;font-size:12px;">${(s.received_at||'').slice(0,16).replace('T',' ')}</td>
         <td>${s.parsed_name || '<span style="color:var(--muted)">파싱실패</span>'}</td>
         <td style="font-family:'DM Mono',monospace;">${s.parsed_amount ? Number(s.parsed_amount).toLocaleString()+'원' : '-'}</td>
         <td><span class="badge ${s.matched?'badge-ok':'badge-pending'}">${s.matched?'✅ 매칭됨':'⏳ 대기중'}</span></td>
