@@ -1820,6 +1820,15 @@ def run_auto_check():
             imweb_status = 'success'; sms_status = 'success'
             imweb_confirmed = 0; sms_confirmed = 0; error_msg = None
 
+            # ⭐ v21: stale OPEN imweb 후보 일괄 정리 (옛날 금액 잔존 방지)
+            #   사용자가 거절/승인/삭제한 후보(status != 'open')는 보존됨.
+            deleted_stale = conn.execute(
+                "DELETE FROM match_candidates WHERE source='imweb' AND status='open' AND session_id=?",
+                (sid,)
+            ).rowcount
+            if deleted_stale:
+                logger.info(f"  🧹 stale 아임웹 후보 {deleted_stale}건 정리 (재스캔으로 최신 금액으로 재생성됨)")
+
             # 1) 아임웹 카드결제 — 조회기간 라이브 ~ +30일 (오늘로 캡)
             try:
                 live_dt = datetime.strptime(session['live_date'], '%Y-%m-%d')
