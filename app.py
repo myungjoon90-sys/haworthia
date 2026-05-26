@@ -1584,16 +1584,41 @@ def save_candidate(conn, session_id, source, source_ref,
         if neg:
             logger.info(f"  🚫 후보 스킵 (이전 거절): '{paid_name}'↔'{buyer_name}'")
             return
+    src_ref_str = str(source_ref) if source_ref else ''
+    # v19: 이미 같은 후보가 있으면 UPDATE (이전엔 silent skip → 금액 갱신 안되던 버그)
+    existing = conn.execute(
+        "SELECT id, status, amount, candidate_amount, confidence FROM match_candidates "
+        "WHERE session_id=? AND source=? AND source_ref=? "
+        "  AND COALESCE(candidate_order_id,-1)=COALESCE(?,-1)",
+        (session_id, source, src_ref_str, first_id)
+    ).fetchone()
+    if existing:
+        if existing['status'] != 'open':
+            return  # 사용자가 이미 거절/승인/삭제한 후보는 그대로 둠
+        if (existing['amount'] == amount and existing['candidate_amount'] == cand_amt
+                and existing['confidence'] == confidence):
+            return  # 값 동일하면 스킵
+        conn.execute(
+            "UPDATE match_candidates SET paid_name=?, paid_name2=?, amount=?, paid_at=?, "
+            "candidate_buyer_name=?, candidate_amount=?, confidence=?, reason=?, "
+            "created_at=? WHERE id=?",
+            (paid_name, paid_name2, amount, paid_at,
+             buyer_name, cand_amt, confidence, reason,
+             datetime.now().isoformat(), existing['id'])
+        )
+        logger.info(f"  🔄 의심후보 갱신: id={existing['id']} '{paid_name}' {amount:,}원 → '{buyer_name}' 합계{cand_amt} ({confidence})")
+        return
     try:
-        conn.execute('''INSERT INTO match_candidates
-              (session_id, source, source_ref, paid_name, paid_name2,
-               amount, paid_at, candidate_order_id, candidate_buyer_name,
-               candidate_amount, confidence, reason, status, created_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',?)''',
-              (session_id, source, str(source_ref) if source_ref else '',
-               paid_name, paid_name2, amount, paid_at,
-               first_id, buyer_name, cand_amt, confidence, reason,
-               datetime.now().isoformat()))
+        conn.execute(
+            "INSERT INTO match_candidates "
+            "(session_id, source, source_ref, paid_name, paid_name2, "
+            " amount, paid_at, candidate_order_id, candidate_buyer_name, "
+            " candidate_amount, confidence, reason, status, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',?)",
+            (session_id, source, src_ref_str,
+             paid_name, paid_name2, amount, paid_at,
+             first_id, buyer_name, cand_amt, confidence, reason,
+             datetime.now().isoformat()))
         logger.info(f"  🤔 의심후보: src={source} '{paid_name}' {amount:,}원 → '{buyer_name}' 합계{cand_amt} ({confidence}: {reason})")
     except Exception as e:
         if 'UNIQUE' not in str(e):
