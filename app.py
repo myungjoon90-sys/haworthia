@@ -1042,17 +1042,22 @@ def import_buyer_status():
 
 @app.route('/api/buyer/status', methods=['GET'])
 def get_buyer_status():
-    """세션의 모든 구매자 상태 조회 → {buyer_name: status} 매핑"""
+    """구매자 상태 조회.
+       session_id 있으면 {buyer_name: status} 매핑 반환
+       session_id 없으면 [{session_id, buyer_name, status}, ...] 리스트 반환 (v23)"""
     sid = request.args.get('session_id')
-    if not sid:
-        return jsonify({'error': 'session_id 필요'}), 400
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT buyer_name, status FROM buyer_status WHERE session_id=?",
-        (sid,)
-    ).fetchall()
-    conn.close()
-    return jsonify({r['buyer_name']: r['status'] for r in rows})
+    if sid:
+        rows = conn.execute(
+            "SELECT buyer_name, status FROM buyer_status WHERE session_id=?",
+            (sid,)
+        ).fetchall()
+        conn.close()
+        return jsonify({r['buyer_name']: r['status'] for r in rows})
+    else:
+        rows = conn.execute("SELECT session_id, buyer_name, status FROM buyer_status").fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
 
 
 # ══════════════════════════════════════════════════════════════════
