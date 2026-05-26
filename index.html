@@ -513,7 +513,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   </div>
 
   <!-- 통계 -->
-  <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+  <div class="stat-grid" style="grid-template-columns:repeat(5,1fr);">
     <div class="stat-card blue" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
       <div class="stat-val" id="auto-total">-</div><div class="stat-lbl">전체 주문자</div></div>
     <div class="stat-card yellow" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
@@ -522,6 +522,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <div class="stat-val" id="auto-candidates">-</div><div class="stat-lbl">🤔 의심가는 후보 🔍</div></div>
     <div class="stat-card green" onclick="switchInnerTab('confirmed')" style="cursor:pointer;" title="클릭: 입금확인 보기">
       <div class="stat-val" id="auto-confirmed">-</div><div class="stat-lbl">✅ 입금확인 🔍</div></div>
+    <div class="stat-card green" onclick="switchInnerTab('stored')" style="cursor:pointer;background:rgba(245,158,11,0.10);border-color:#f59e0b;" title="클릭: 입금확인(보관) 보기">
+      <div class="stat-val" id="auto-stored" style="color:#f59e0b;">-</div><div class="stat-lbl">📦 입금확인(보관) 🔍</div></div>
   </div>
 
   <!-- 탭 -->
@@ -534,6 +536,9 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     </div>
     <div class="inner-tab" id="tab-confirmed" onclick="switchInnerTab('confirmed')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
       ✅ 입금확인
+    </div>
+    <div class="inner-tab" id="tab-stored" onclick="switchInnerTab('stored')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+      📦 입금확인(보관) <span id="stored-count-badge" class="nav-badge" style="background:#f59e0b;"></span>
     </div>
   </div>
 
@@ -588,7 +593,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     </div>
   </div>
 
-  <!-- 입금확인 리스트 -->
+  <!-- 입금확인 리스트 (보관 안된 것만) -->
   <div id="inner-confirmed" style="display:none;">
     <div class="card">
       <div class="card-head">
@@ -596,12 +601,32 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-blue" onclick="downloadDeliveryExcel()">⬇ 엑셀 다운로드</button>
       </div>
       <div class="tbl-wrap">
-        <table>
+        <table style="table-layout:auto;">
           <thead><tr>
-            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>결제방법</th><th>확인일시</th>
+            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>결제방법</th><th>확인일시</th><th style="width:90px;text-align:center;">보관</th>
           </tr></thead>
           <tbody id="confirmedTbody">
-            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 입금확인 (보관) 리스트 -->
+  <div id="inner-stored" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>📦 입금확인 (식물 보관 중)</h3>
+        <div style="font-size:13px;color:var(--muted);">'1. 거래명세표 발송' 페이지의 [📦 식물 보관 중인 구매자]와 자동 연동됩니다</div>
+      </div>
+      <div class="tbl-wrap">
+        <table style="table-layout:auto;">
+          <thead><tr>
+            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>결제방법</th><th>확인일시</th><th style="width:110px;text-align:center;">처리</th>
+          </tr></thead>
+          <tbody id="storedConfirmedTbody">
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">보관 중인 구매자 없음</td></tr>
           </tbody>
         </table>
       </div>
@@ -968,23 +993,34 @@ async function loadAutoPage() {
   const sid = document.getElementById('autoSessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
   try {
-    const [pendingRes, confirmedRes, sessionsRes, candRes] = await Promise.all([
+    const [pendingRes, confirmedRes, sessionsRes, candRes, statusRes] = await Promise.all([
       fetch(API + '/api/orders/pending' + qs),
       fetch(API + '/api/orders/confirmed' + qs),
       fetch(API + '/api/sessions'),
-      fetch(API + '/api/candidates' + qs)
+      fetch(API + '/api/candidates' + qs),
+      // 보관 상태: 세션 선택돼 있으면 그 세션만, 아니면 전체
+      sid ? fetch(API + '/api/buyer/status?session_id=' + sid) : fetch(API + '/api/buyer/status')
     ]);
     const pending    = await pendingRes.json();
     const confirmed  = await confirmedRes.json();
     const sessions   = await sessionsRes.json();
     const candidates = await candRes.json();
+    const statusData = await statusRes.json();
+
+    // statusData: 세션 선택 시 → {buyer:status} / 미선택 → [{session_id,buyer_name,status}]
+    _storedMap = {};
+    if (Array.isArray(statusData)) {
+      for (const r of statusData) _storedMap[`${r.session_id}:${r.buyer_name}`] = r.status;
+    } else if (sid) {
+      for (const [b, s] of Object.entries(statusData)) _storedMap[`${sid}:${b}`] = s;
+    }
 
     renderPending(pending);
     renderConfirmed(confirmed);
     renderCandidates(candidates);
     document.getElementById('auto-total').textContent = pending.length + confirmed.length;
     document.getElementById('auto-pending').textContent = pending.length;
-    document.getElementById('auto-confirmed').textContent = confirmed.length;
+    // auto-confirmed / auto-stored 는 renderConfirmed에서 분할 계산
     document.getElementById('auto-candidates').textContent = candidates.length;
     document.getElementById('pending-count-badge').textContent = pending.length;
     const candBadge = document.getElementById('candidates-count-badge');
@@ -1088,27 +1124,85 @@ function renderPending(items) {
     </tr>`;
 }
 
+let _storedMap = {};  // {"sid:buyer": status} — v23
 function renderConfirmed(items) {
   const tbody = document.getElementById('confirmedTbody');
-  if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>';
-    return;
-  }
-  const totalAmt = items.reduce((s, i) => s + Number(i.total_amount), 0);
+  const storedTbody = document.getElementById('storedConfirmedTbody');
+  const isStored = (i) => _storedMap[`${i.session_id}:${i.buyer_name}`] === 'stored';
+  const normal = items.filter(i => !isStored(i));
+  const stored = items.filter(i => isStored(i));
+
+  document.getElementById('auto-confirmed').textContent = normal.length;
+  document.getElementById('auto-stored').textContent = stored.length;
+  const storedBadge = document.getElementById('stored-count-badge');
+  if (stored.length > 0) { storedBadge.textContent = stored.length; storedBadge.classList.add('show'); }
+  else { storedBadge.classList.remove('show'); storedBadge.textContent = ''; }
+
   const payLabel = {card:'카드결제', transfer:'계좌이체', manual:'수동확인', '':'-'};
-  tbody.innerHTML = items.map(i => `
-    <tr>
-      <td><strong>${i.buyer_name}</strong></td>
-      <td style="font-size:12px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
-      <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
-      <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
-      <td style="font-family:'DM Mono',monospace;font-size:12px;">${i.confirmed_at?i.confirmed_at.slice(0,16).replace('T',' '):'-'}</td>
-    </tr>`).join('') +
-    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
-      <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
-      <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
-      <td colspan="2"></td>
-    </tr>`;
+  const fmt = (i, withStoreBtn) => {
+    const safeBuyer = (i.buyer_name||'').replace(/['"\\]/g, '');
+    const btn = withStoreBtn
+      ? `<button class="btn" style="padding:4px 10px;background:#f59e0b;color:#fff;" onclick="storeConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="식물 보관으로 이동">📦 보관</button>`
+      : `<button class="btn" style="padding:4px 10px;background:#6b7280;color:#fff;" onclick="unstoreConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="보관 해제 → 입금확인 탭으로 복귀">↩️ 복귀</button>`;
+    return `
+      <tr>
+        <td><strong>${i.buyer_name}</strong></td>
+        <td style="font-size:12px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
+        <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
+        <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
+        <td style="font-family:'DM Mono',monospace;font-size:12px;">${i.confirmed_at?i.confirmed_at.slice(0,16).replace('T',' '):'-'}</td>
+        <td style="text-align:center;">${btn}</td>
+      </tr>`;
+  };
+
+  if (!normal.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>';
+  } else {
+    const totalAmt = normal.reduce((s, i) => s + Number(i.total_amount), 0);
+    tbody.innerHTML = normal.map(i => fmt(i, true)).join('') +
+      `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+        <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+        <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+        <td colspan="3"></td>
+      </tr>`;
+  }
+
+  if (storedTbody) {
+    if (!stored.length) {
+      storedTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">보관 중인 구매자 없음</td></tr>';
+    } else {
+      const totalAmt = stored.reduce((s, i) => s + Number(i.total_amount), 0);
+      storedTbody.innerHTML = stored.map(i => fmt(i, false)).join('') +
+        `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+          <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+          <td style="font-family:'DM Mono',monospace;font-weight:700;color:#f59e0b;padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+          <td colspan="3"></td>
+        </tr>`;
+    }
+  }
+}
+
+async function storeConfirmedBuyer(sid, buyer) {
+  try {
+    const r = await fetch(API + '/api/buyer/status', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sid, buyer_name: buyer, status: 'stored'})
+    });
+    const d = await r.json();
+    if (d.ok) { toast(`📦 '${buyer}' 보관으로 이동`, 'ok'); loadAutoPage(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+async function unstoreConfirmedBuyer(sid, buyer) {
+  try {
+    const r = await fetch(API + '/api/buyer/status', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sid, buyer_name: buyer, status: 'reset'})
+    });
+    const d = await r.json();
+    if (d.ok) { toast(`↩️ '${buyer}' 보관 해제`, 'ok'); loadAutoPage(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
 }
 
 function switchInnerTab(tab) {
@@ -1116,6 +1210,7 @@ function switchInnerTab(tab) {
     pending:    { id: 'inner-pending',    tabId: 'tab-pending',    color: 'var(--yellow)' },
     candidates: { id: 'inner-candidates', tabId: 'tab-candidates', color: '#f59e0b' },
     confirmed:  { id: 'inner-confirmed',  tabId: 'tab-confirmed',  color: 'var(--green)' },
+    stored:     { id: 'inner-stored',     tabId: 'tab-stored',     color: '#f59e0b' },
   };
   Object.entries(states).forEach(([key, s]) => {
     const active = (key === tab);
