@@ -34,6 +34,11 @@ def init_db():
         c.execute("ALTER TABLE orders ADD COLUMN item_no TEXT")
     except sqlite3.OperationalError:
         pass
+    # ★ v24: 위탁 정산용 — 타업체 제품 여부 (체크 시 10% 추가 차감)
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN is_3rd_party INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS sms_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
