@@ -425,6 +425,10 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="nav-item" onclick="showPage('catalog')" id="nav-catalog">
     📚 총 판매품 리스트
   </div>
+  <div class="nav-item" onclick="showPage('consign')" id="nav-consign">
+    💰 위탁판매 정산
+    <span class="nav-badge" id="badge-consign"></span>
+  </div>
   <div class="nav-item" onclick="showPage('mapping')" id="nav-mapping">
     🔗 닉네임 매핑
   </div>
@@ -786,6 +790,32 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
+     PAGE: 위탁판매 정산 (★ v24)
+══════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-consign">
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-head">
+      <h3>💰 위탁판매 정산</h3>
+      <div style="font-size:13px;color:var(--muted);">거래명세표 상품명에 <strong style="color:var(--text)">-XXX위탁</strong> suffix가 있는 입금확인 완료 주문만 자동으로 집계됩니다</div>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="consignSessionFilter" onchange="loadConsign()" style="flex:1;min-width:240px;padding:8px 12px;">
+          <option value="">전체 세션</option>
+        </select>
+        <button class="btn btn-secondary" onclick="loadConsign()">🔄 새로고침</button>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin-top:8px;">
+        💡 <strong>타업체 제품 유무</strong> 체크박스를 누르면 즉시 수수료가 0.9로 반영되고 DB에 자동 저장됩니다.
+      </p>
+    </div>
+  </div>
+  <div id="consignContainer">
+    <div class="card"><div class="card-body" style="text-align:center;color:var(--muted);padding:40px;">불러오는 중...</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
      PAGE: 닉네임 매핑
 ══════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-mapping">
@@ -885,6 +915,7 @@ function showPage(id) {
   if (id === 'delivery') { loadDelivery(); loadSessionFilter(); }
   if (id === 'members') { loadMembers(); }
   if (id === 'catalog') { loadCatalog(); }
+  if (id === 'consign') { loadConsignSessions(); loadConsign(); }
   if (id === 'mapping')  loadMappings();
   if (id === 'guide')    { updateGuideBanner(document.getElementById('serverDot').classList.contains('on')); loadSmsLog(); }
 }
@@ -1057,7 +1088,11 @@ function renderTimeline(session) {
     const wd = weekdays[d.getDay()];
     const md = `${d.getMonth()+1}/${d.getDate()}`;
     let status = d < today ? 'past' : d.getTime()===today.getTime() ? 'today' : 'future';
-    days.push({ d, wd, md, status, dateStr: d.toISOString().slice(0,10) });
+    // ⚠️ toISOString()은 UTC로 변환돼 한국시간 자정이 '전날'로 밀린다 → check_logs 날짜와 안 맞아 항상 '미실행'으로 표시됨.
+    //    백엔드(check_start 기준 로컬 날짜)와 일치하도록 로컬 연-월-일로 키 생성.
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    days.push({ d, wd, md, status, dateStr });
   }
 
   // 먼저 날짜만 표시
@@ -1541,6 +1576,138 @@ function switchDeliveryTab(tab) {
   document.getElementById('delivery-pending').style.display   = isConf ? 'none' : 'block';
   document.getElementById('dtab-confirmed').style.cssText = `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid ${isConf?'var(--green)':'transparent'};color:${isConf?'var(--green)':'var(--muted)'};`;
   document.getElementById('dtab-pending').style.cssText   = `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid ${!isConf?'var(--yellow)':'transparent'};color:${!isConf?'var(--yellow)':'var(--muted)'};`;
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// v24: 위탁판매 정산
+// ══════════════════════════════════════════════════════════════════
+async function loadConsignSessions() {
+  try {
+    const r = await fetch(API + '/api/sessions');
+    const sessions = await r.json();
+    const sel = document.getElementById('consignSessionFilter');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">전체 세션</option>' +
+      sessions.map(s => `<option value="${s.id}">${s.live_date} · ${s.filename}</option>`).join('');
+    sel.value = cur;
+  } catch(e) {}
+}
+
+async function loadConsign() {
+  const sid = (document.getElementById('consignSessionFilter')||{}).value;
+  const qs = sid ? '?session_id=' + sid : '';
+  const container = document.getElementById('consignContainer');
+  container.innerHTML = '<div class="card"><div class="card-body" style="text-align:center;color:var(--muted);padding:40px;">불러오는 중...</div></div>';
+  try {
+    const r = await fetch(API + '/api/consignment/list' + qs);
+    const groups = await r.json();
+    const badge = document.getElementById('badge-consign');
+    if (groups.length > 0) { badge.textContent = groups.length; badge.classList.add('show'); }
+    else { badge.classList.remove('show'); badge.textContent = ''; }
+    if (!groups.length) {
+      container.innerHTML = '<div class="card"><div class="card-body" style="text-align:center;color:var(--muted);padding:40px;">위탁(-XXX위탁) 항목이 있는 입금확인 주문이 없습니다</div></div>';
+      return;
+    }
+    const fmt = (n) => Number(n || 0).toLocaleString();
+    container.innerHTML = groups.map(g => renderConsignGroup(g, fmt)).join('');
+  } catch(e) {
+    container.innerHTML = '<div class="card"><div class="card-body" style="color:var(--red);">불러오기 실패: ' + e.message + '</div></div>';
+  }
+}
+
+function renderConsignGroup(g, fmt) {
+  const dateKr = (() => {
+    if (!g.live_date) return '';
+    const d = new Date(g.live_date + 'T00:00:00');
+    return `${d.getMonth()+1}월 ${d.getDate()}일`;
+  })();
+  const rowsHtml = g.rows.map(r => {
+    const dt = (() => {
+      if (!r.live_date) return '';
+      const d = new Date(r.live_date + 'T00:00:00');
+      return `${String(d.getMonth()+1).padStart(2,'0')}월 ${String(d.getDate()).padStart(2,'0')}일`;
+    })();
+    const checked = r.is_3rd_party ? 'checked' : '';
+    return `
+      <tr>
+        <td style="text-align:center;background:#f7f7f7;color:#222;">${dt}</td>
+        <td style="text-align:center;background:#f7f7f7;color:#222;">${r.no}</td>
+        <td style="background:#FFC080;color:#222;">${r.item_name||''}</td>
+        <td style="text-align:right;background:#fff;color:#222;font-family:'DM Mono',monospace;">${fmt(r.price)}</td>
+        <td style="text-align:center;background:#fff;color:#222;">${r.qty}</td>
+        <td style="text-align:right;background:#fff;color:#222;font-family:'DM Mono',monospace;">${fmt(r.sale_total)}</td>
+        <td style="text-align:center;background:#FFA500;color:#222;font-weight:600;">
+          <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;">
+            <input type="checkbox" ${checked} onchange="toggle3rdParty(${r.order_id}, this.checked)" style="width:15px;height:15px;cursor:pointer;">
+            <span data-third="${r.order_id}">${r.third_factor}</span>
+          </label>
+        </td>
+        <td style="text-align:center;background:#FFA500;color:#222;">${r.live_factor}</td>
+        <td style="text-align:right;background:#9BE6A1;color:#222;font-family:'DM Mono',monospace;font-weight:600;" data-after-platform="${r.order_id}">${fmt(r.after_platform)}</td>
+        <td style="text-align:right;background:#9BE6A1;color:#222;font-family:'DM Mono',monospace;font-weight:600;" data-after-remit="${r.order_id}">${fmt(r.after_remit)}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="card" style="margin-bottom:20px;border-color:#FFA500;">
+      <div class="card-head" style="background:#fff8e6;color:#222;">
+        <h3 style="color:#222;">${dateKr} ${g.consignor} / 유튜브</h3>
+        <button class="btn btn-blue" onclick="downloadConsignExcel('${g.consignor.replace(/['"\\]/g,'')}', ${g.rows[0] && g.rows[0].order_id ? '' : ''})">⬇ 엑셀 다운로드</button>
+      </div>
+      <div class="tbl-wrap" style="background:#fff;">
+        <table style="background:#fff;color:#222;table-layout:auto;width:100%;">
+          <thead style="background:#f7f7f7;color:#222;">
+            <tr>
+              <th style="color:#222;text-align:center;width:80px;">정산<br>날짜</th>
+              <th style="color:#222;text-align:center;width:50px;">번호</th>
+              <th style="color:#222;text-align:center;">이름</th>
+              <th style="color:#222;text-align:center;width:90px;">가격</th>
+              <th style="color:#222;text-align:center;width:60px;">수량</th>
+              <th style="color:#222;text-align:center;width:90px;">판매가 합</th>
+              <th style="color:#222;text-align:center;width:120px;background:#FFA500;">타업체<br>제품 유무(10%)</th>
+              <th style="color:#222;text-align:center;width:100px;background:#FFA500;">라방판매(20%)</th>
+              <th style="color:#222;text-align:center;width:170px;background:#9BE6A1;">라방플랫폼수수료 제외 가격<br>(적립금 100% 사용가능)</th>
+              <th style="color:#222;text-align:center;width:130px;background:#9BE6A1;">송금 정산 시<br>가격 (20% 제)</th>
+            </tr>
+          </thead>
+          <tbody data-consignor="${g.consignor}">${rowsHtml}</tbody>
+          <tfoot>
+            <tr style="background:#FFFF66;color:#222;font-weight:700;">
+              <td colspan="8" style="text-align:right;color:#222;">합계</td>
+              <td style="text-align:right;color:#222;font-family:'DM Mono',monospace;" data-sum-platform>${fmt(g.sum_after_platform)}</td>
+              <td style="text-align:right;color:#222;font-family:'DM Mono',monospace;" data-sum-remit>${fmt(g.sum_after_remit)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function toggle3rdParty(orderId, checked) {
+  try {
+    const r = await fetch(API + '/api/orders/' + orderId + '/3rd-party', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({is_3rd_party: checked ? 1 : 0})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      // 즉시 재로딩 (합계까지 새로 계산)
+      loadConsign();
+    } else {
+      toast('수정 실패: ' + (d.error||''), 'err');
+    }
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+function downloadConsignExcel(consignor) {
+  const sid = (document.getElementById('consignSessionFilter')||{}).value;
+  const url = API + '/api/consignment/excel?consignor=' + encodeURIComponent(consignor)
+            + (sid ? '&session_id=' + sid : '');
+  const a = document.createElement('a');
+  a.href = url;
+  a.click();
 }
 
 // ══════════════════════════════════════════════════════════════════
