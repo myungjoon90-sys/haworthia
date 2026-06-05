@@ -210,10 +210,17 @@ def extract_order_info(iorder):
 
 
 
+# 알려진 "조용히 넘어가도 되는" 코드들 — 이미 그 상태거나 의미 없는 호출
+_STANDBY_SKIP_KEYWORDS = (
+    '이미', '동일', '준비중이 아', '발송', '배송중', '배송완', '취소', '환불',
+    'already', 'same state', 'invalid status', 'not preparing'
+)
+
 def set_order_to_standby(order_no, prod_order_nos=None):
     """아임웹 주문을 '상품 준비중' → '배송대기'로 전환.
     PATCH /v2/shop/orders/{order_no}/place
-    body: {} 또는 {"prod_order_nos": [...]}
+    body: {prod_order_nos: [...]} — 아임웹 V2는 prod_order_no 리스트가 필수.
+    [v22] 자세한 진단 로그 + 알려진 상태(이미 배송대기/배송중/취소 등)는 info로 강등.
     """
     token = get_access_token()
     if not token:
@@ -223,20 +230,57 @@ def set_order_to_standby(order_no, prod_order_nos=None):
     body = {}
     if prod_order_nos:
         body['prod_order_nos'] = prod_order_nos if isinstance(prod_order_nos, list) else [prod_order_nos]
+
+    def _send(tok):
+        return requests.patch(
+            url,
+            headers={"access-token": tok, "Content-Type": "application/json"},
+            json=body, timeout=10
+        )
+
     try:
-        resp = requests.patch(url, headers={"access-token": token, "Content-Type": "application/json"}, json=body, timeout=10)
-        data = resp.json() if resp.text else {}
+        resp = _send(token)
+        try:
+            data = resp.json() if resp.text else {}
+        except Exception:
+            data = {'_raw_text': resp.text[:300]}
+
+        # 토큰 만료 시 1회 재시도
         if _is_token_error(data):
+            logger.info(f"  [imweb standby] 토큰 만료 감지 → 재발급 후 재시도: {order_no}")
             invalidate_token()
             token = get_access_token(force_refresh=True)
             if token:
-                resp = requests.patch(url, headers={"access-token": token, "Content-Type": "application/json"}, json=body, timeout=10)
-                data = resp.json() if resp.text else {}
-        if data.get('code') == 200:
+                resp = _send(token)
+                try: data = resp.json() if resp.text else {}
+                except Exception: data = {'_raw_text': resp.text[:300]}
+
+        code = data.get('code')
+        msg  = (data.get('msg') or data.get('message') or '').strip()
+
+        if code == 200:
             logger.info(f"  🚚 아임웹 배송대기 전환 성공: {order_no}")
             return True
-        logger.warning(f"  ⚠️ 아임웹 배송대기 전환 실패: {order_no} → {str(data)[:200]}")
+
+        # 알려진 "괜찮은" 실패 — 이미 그 상태이거나 의미가 없는 경우
+        msg_l = msg.lower()
+        if any(k in msg or k.lower() in msg_l for k in _STANDBY_SKIP_KEYWORDS):
+            logger.info(f"  ℹ️ 아임웹 배송대기: '{order_no}' → 스킵 (사유: {msg or 'code='+str(code)})")
+            return True  # 사용자 입장에선 "이미 됐다"이므로 성공 처리
+
+        # 진단 강화: HTTP 상태/코드/메시지/요청바디 전부 로깅
+        logger.warning(
+            f"  ⚠️ 아임웹 배송대기 전환 실패: order={order_no} "
+            f"http={resp.status_code} api_code={code} msg='{msg or str(data)[:160]}' "
+            f"body_sent={body}"
+        )
+        return False
+    except requests.exceptions.Timeout:
+        logger.error(f"  ❌ 아임웹 배송대기 타임아웃 (10초): {order_no}")
+        return False
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"  ❌ 아임웹 배송대기 연결 오류: {order_no} → {e}")
         return False
     except Exception as e:
-        logger.error(f"  ❌ 아임웹 배송대기 전환 오류: {order_no} → {e}")
+        logger.error(f"  ❌ 아임웹 배송대기 전환 예외: {order_no} → {type(e).__name__}: {e}")
         return False
