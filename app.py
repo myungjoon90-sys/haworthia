@@ -925,7 +925,10 @@ def products_upload():
 #  - × 0.8 → 송금 정산 시 가격
 # ══════════════════════════════════════════════════════════════════
 import re as _re_consign
-_CONSIGN_RE = _re_consign.compile(r'-([^-]+)위탁\s*$')
+# 위탁 suffix 인식 — "-SSAC위탁", "-SW위탁", "-IB위탁품" 모두 지원.
+#   · '위탁' 뒤에 '품' 같은 글자가 붙어도 인식 (위탁/위탁품)
+#   · 대시(-) 앞뒤 공백 허용 ("럭키금 -SW위탁", "페일피스 -IB위탁품")
+_CONSIGN_RE = _re_consign.compile(r'-\s*([^-]+?)\s*위탁품?\s*$')
 
 def _parse_consign(item_str):
     """item 문자열에서 (clean_name, consignor_id) 추출. 위탁 아니면 (None, None)."""
