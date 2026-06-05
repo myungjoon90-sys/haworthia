@@ -762,7 +762,17 @@ def products_list():
         sql += " ORDER BY pc.live_date DESC, pc.id"
         rows = conn.execute(sql).fetchall()
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    # 🌿 '하월시아 이름 + 판매가격'이 같은 중복 항목은 1건만 노출 (정렬 순서상 첫 건 유지)
+    seen = set()
+    deduped = []
+    for r in rows:
+        r = dict(r)
+        key = ((r.get('item_name') or '').strip(), r.get('price'))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+    return jsonify(deduped)
 
 
 @app.route('/api/products/download', methods=['GET'])
@@ -904,6 +914,241 @@ def products_upload():
         conn.close()
     logger.info(f"📚 판매품 리스트 import: {added}건")
     return jsonify({'ok': True, 'added': added})
+
+
+
+# ══════════════════════════════════════════════════════════════════
+#  위탁판매 정산 (★ v24)
+#  거래명세표 item에 "-XXX위탁" suffix가 있는 confirmed 주문만 대상.
+#  - XXX 부분을 위탁자 ID로 추출
+#  - 타업체 계수(0.9 or 1.0) × 라방계수(0.8) → 라방플랫폼수수료 제외 가격
+#  - × 0.8 → 송금 정산 시 가격
+# ══════════════════════════════════════════════════════════════════
+import re as _re_consign
+_CONSIGN_RE = _re_consign.compile(r'-([^-]+)위탁\s*$')
+
+def _parse_consign(item_str):
+    """item 문자열에서 (clean_name, consignor_id) 추출. 위탁 아니면 (None, None)."""
+    if not item_str: return (None, None)
+    s = str(item_str).strip()
+    m = _CONSIGN_RE.search(s)
+    if not m: return (None, None)
+    consignor = m.group(1).strip()
+    clean = s[:m.start()].rstrip(' -·')
+    return (clean, consignor)
+
+
+@app.route('/api/consignment/list', methods=['GET'])
+def consignment_list():
+    """위탁자별 정산 데이터.
+    session_id 옵션. 응답: { 'SSAC': {'live_date': ..., 'rows': [...], 'totals': {...}}, ... }
+    각 row: order_id, item_name, price, qty, is_3rd_party, sale_total, after_platform, after_remit
+    """
+    session_id = request.args.get('session_id')
+    conn = get_conn()
+    sql = ("SELECT o.id, o.item, o.amount, o.session_id, o.is_3rd_party, "
+           "       ls.live_date, ls.filename "
+           "FROM orders o LEFT JOIN live_sessions ls ON o.session_id=ls.id "
+           "WHERE o.status='confirmed'")
+    params = []
+    if session_id:
+        sql += " AND o.session_id=?"
+        params.append(session_id)
+    sql += " ORDER BY o.confirmed_at ASC, o.id ASC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    grouped = {}
+    seq = {}
+    for r in rows:
+        clean, cons = _parse_consign(r['item'])
+        if not cons: continue
+        price = int(r['amount'] or 0)
+        qty = 1
+        sale_total = price * qty
+        is_3p = 1 if (r['is_3rd_party'] or 0) else 0
+        third_factor = 0.9 if is_3p else 1.0
+        live_factor = 0.8
+        after_platform = round(sale_total * third_factor * live_factor)
+        after_remit = round(after_platform * 0.8)
+
+        if cons not in grouped:
+            grouped[cons] = {
+                'consignor': cons,
+                'live_date': r['live_date'],
+                'filename': r['filename'],
+                'rows': [],
+                'sum_sale': 0, 'sum_after_platform': 0, 'sum_after_remit': 0,
+            }
+            seq[cons] = 0
+        seq[cons] += 1
+        grouped[cons]['rows'].append({
+            'no': seq[cons],
+            'order_id': r['id'],
+            'item_name': clean,
+            'item_full': r['item'],
+            'price': price,
+            'qty': qty,
+            'sale_total': sale_total,
+            'is_3rd_party': is_3p,
+            'third_factor': third_factor,
+            'live_factor': live_factor,
+            'after_platform': after_platform,
+            'after_remit': after_remit,
+            'live_date': r['live_date'],
+        })
+        grouped[cons]['sum_sale'] += sale_total
+        grouped[cons]['sum_after_platform'] += after_platform
+        grouped[cons]['sum_after_remit'] += after_remit
+
+    # 정렬: 위탁자 가나다순
+    return jsonify(sorted(grouped.values(), key=lambda x: x['consignor']))
+
+
+@app.route('/api/orders/<int:order_id>/3rd-party', methods=['PUT'])
+def set_3rd_party(order_id):
+    """타업체 제품 유무 토글"""
+    data = request.get_json(silent=True) or {}
+    flag = 1 if data.get('is_3rd_party') else 0
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE orders SET is_3rd_party=? WHERE id=?", (flag, order_id))
+        conn.commit()
+        return jsonify({'ok': True, 'is_3rd_party': flag})
+    finally:
+        conn.close()
+
+
+@app.route('/api/consignment/excel', methods=['GET'])
+def consignment_excel():
+    """위탁자 한 명의 정산표를 엑셀로 다운로드.
+    layout: 정산날짜 | 번호 | 이름 | 가격 | 수량 | 판매가 합 | 타업체(10%) | 라방판매(20%)
+            | 라방플랫폼수수료 제외 가격 | 송금 정산 시 가격 (20%제)
+    """
+    consignor = (request.args.get('consignor') or '').strip()
+    session_id = request.args.get('session_id')
+    if not consignor:
+        return jsonify({'error': 'consignor 필요'}), 400
+    # 데이터 재사용
+    from flask import request as _req
+    # 직접 쿼리
+    conn = get_conn()
+    sql = ("SELECT o.id, o.item, o.amount, o.is_3rd_party, ls.live_date "
+           "FROM orders o LEFT JOIN live_sessions ls ON o.session_id=ls.id "
+           "WHERE o.status='confirmed'")
+    params = []
+    if session_id:
+        sql += " AND o.session_id=?"
+        params.append(session_id)
+    sql += " ORDER BY o.confirmed_at ASC, o.id ASC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    items = []
+    for r in rows:
+        clean, cons = _parse_consign(r['item'])
+        if cons != consignor: continue
+        items.append((r['id'], clean, int(r['amount'] or 0), r['live_date'], 1 if (r['is_3rd_party'] or 0) else 0))
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f'{consignor[:20]} 정산'
+
+    # 제목
+    title_date = items[0][3] if items else datetime.now().strftime('%Y-%m-%d')
+    try:
+        dt = datetime.strptime(title_date, '%Y-%m-%d')
+        title_date_kr = f"{dt.month}월 {dt.day}일"
+    except Exception:
+        title_date_kr = title_date or ''
+    ws.cell(row=1, column=1, value=f"{title_date_kr} {consignor} / 유튜브").font = Font(bold=True, size=13)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+
+    # 헤더
+    headers = ['정산\n날짜', '번호', '이름', '가격', '수량', '판매가 합',
+               '타업체\n제품 유무(10%)', '라방판매(20%)',
+               '라방플랫폼수수료 제외 가격\n(적립금 100% 사용가능)',
+               '송금 정산 시\n가격 (20% 제)']
+    header_fill   = PatternFill(fill_type='solid', fgColor='F2F2F2')
+    orange_fill   = PatternFill(fill_type='solid', fgColor='FFA500')
+    green_fill    = PatternFill(fill_type='solid', fgColor='9BE6A1')
+    yellow_fill   = PatternFill(fill_type='solid', fgColor='FFFF66')
+    name_fill     = PatternFill(fill_type='solid', fgColor='FFC080')
+
+    from openpyxl.styles import Alignment, Border, Side
+    thin = Side(border_style='thin', color='000000')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    right = Alignment(horizontal='right', vertical='center')
+
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=ci, value=h)
+        cell.font = Font(bold=True)
+        cell.alignment = center
+        cell.border = border
+        if ci in (7, 8): cell.fill = orange_fill
+        elif ci == 9:    cell.fill = green_fill
+        elif ci == 10:   cell.fill = green_fill
+        else:            cell.fill = header_fill
+
+    # 데이터
+    sum_after_platform = 0
+    sum_after_remit = 0
+    for i, (oid, name, price, dt, is_3p) in enumerate(items, 1):
+        try:
+            d = datetime.strptime(dt or title_date, '%Y-%m-%d')
+            dkr = f"{d.month:02d}월 {d.day:02d}일"
+        except Exception:
+            dkr = ''
+        third = 0.9 if is_3p else 1.0
+        sale = price * 1
+        after_p = round(sale * third * 0.8)
+        after_r = round(after_p * 0.8)
+        sum_after_platform += after_p
+        sum_after_remit += after_r
+        row = i + 2
+        cells = [
+            (1, dkr, header_fill),
+            (2, i, header_fill),
+            (3, name, name_fill),
+            (4, price, header_fill),
+            (5, 1, header_fill),
+            (6, sale, header_fill),
+            (7, third, orange_fill),
+            (8, 0.8, orange_fill),
+            (9, after_p, green_fill),
+            (10, after_r, green_fill),
+        ]
+        for ci, val, fill in cells:
+            c = ws.cell(row=row, column=ci, value=val)
+            c.alignment = center if ci in (1, 2, 7, 8) else (right if ci in (4, 5, 6, 9, 10) else center)
+            c.border = border
+            c.fill = fill
+            if isinstance(val, int) and ci in (4, 6, 9, 10):
+                c.number_format = '#,##0'
+
+    # 합계 행 (마지막)
+    bottom_row = len(items) + 3
+    ws.cell(row=bottom_row, column=9, value=sum_after_platform).fill = yellow_fill
+    ws.cell(row=bottom_row, column=10, value=sum_after_remit).fill = yellow_fill
+    for ci in (9, 10):
+        c = ws.cell(row=bottom_row, column=ci)
+        c.number_format = '#,##0'
+        c.font = Font(bold=True)
+        c.alignment = right
+        c.border = border
+
+    # 컬럼폭
+    widths = [10, 8, 28, 12, 8, 12, 14, 14, 24, 18]
+    for ci, w in enumerate(widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = w
+    ws.row_dimensions[2].height = 38
+
+    output = BytesIO()
+    wb.save(output); output.seek(0)
+    fname = f'위탁정산_{consignor}_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 # ══════════════════════════════════════════════════════════════════
