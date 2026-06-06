@@ -11,6 +11,15 @@
 .ed { display:inline-block; min-width:60px; padding:2px 6px; border-radius:4px; cursor:text; }
 .ed:hover { background:rgba(255,255,255,0.06); }
 .ed:focus { outline:1px solid var(--green); background:rgba(255,255,255,0.08); }
+.ed.copyable { cursor:pointer; }
+.ed.copyable:hover { background:rgba(34,197,94,0.12); outline:1px dashed var(--green-border, rgba(34,197,94,0.5)); }
+.ed.copied { background:rgba(34,197,94,0.30) !important; outline:1px solid var(--green); }
+/* 위탁 정산 표: 맑은 고딕 + 1pt 상향 (엑셀과 동일한 느낌) */
+.consign-card, .consign-card th, .consign-card td, .consign-card h3 {
+  font-family: 'Malgun Gothic', '맑은 고딕', 'Apple SD Gothic Neo', sans-serif;
+}
+.consign-card th, .consign-card td { font-size: 14px; }
+.consign-card h3 { font-size: 17px; }
 
 :root {
   --bg: #0d1117; --surface: #161b22; --surface2: #1c2330;
@@ -513,6 +522,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <option value="">전체 세션</option>
     </select>
     <button class="btn btn-secondary" onclick="loadAutoPage()">🔄 새로고침</button>
+    <button class="btn btn-danger" id="deleteSessionBtn" onclick="deleteCurrentSession()" title="선택한 거래명세표(세션)와 관련 주문을 모두 삭제">🗑 이 거래명세표 삭제</button>
     <button class="btn btn-primary" id="checkNowBtn" onclick="runCheckNow()">✅ 지금 확인 실행</button>
   </div>
 
@@ -721,9 +731,12 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="card">
     <div class="card-head">
       <h3>👥 등록된 회원 <span id="members-count" style="color:var(--muted);font-size:14px;">(0명)</span></h3>
-      <input type="text" id="membersSearch" oninput="filterMembers()" placeholder="🔍 이름/전화/주소 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:240px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="membersSearch" oninput="filterMembers()" placeholder="🔍 이름/전화/주소 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:240px;">
+        <button class="btn btn-secondary" id="membersEditBtn" onclick="toggleMembersEdit()" title="평소엔 칸을 클릭하면 복사됩니다. 수정하려면 이 버튼을 누르세요.">✏ 내용 수정</button>
+      </div>
     </div>
-    <p style="font-size:13px;color:var(--muted);margin:0 16px 8px;">💡 각 칸을 클릭하면 바로 수정 가능 (자동저장)</p>
+    <p id="membersHint" style="font-size:13px;color:var(--muted);margin:0 16px 8px;">💡 칸을 클릭하면 해당 칸 내용이 자동 복사됩니다. 수정하려면 오른쪽 위 <strong style="color:var(--text)">✏ 내용 수정</strong> 버튼을 누르세요.</p>
     <div class="tbl-wrap">
       <table style="table-layout:fixed;width:100%;">
         <thead><tr>
@@ -796,7 +809,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="card" style="margin-bottom:16px;">
     <div class="card-head">
       <h3>💰 위탁판매 정산</h3>
-      <div style="font-size:13px;color:var(--muted);">거래명세표 상품명에 <strong style="color:var(--text)">-XXX위탁</strong> suffix가 있는 입금확인 완료 주문만 자동으로 집계됩니다</div>
+      <div style="font-size:13px;color:var(--muted);">상품명에 <strong style="color:var(--text)">'위탁'</strong>이 들어간 모든 주문(대기 포함)을 <strong style="color:var(--text)">구매자별</strong>로 자동 집계합니다</div>
     </div>
     <div class="card-body">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -1018,6 +1031,38 @@ async function loadAutoSessionFilter() {
       sessions.map(s => `<option value="${s.id}">${s.live_date} · ${s.filename}</option>`).join('');
     sel.value = cur;
   } catch(e) {}
+}
+
+// 🗑 선택한 거래명세표(세션) 삭제
+async function deleteCurrentSession() {
+  const sel = document.getElementById('autoSessionFilter');
+  const sid = sel ? sel.value : '';
+  if (!sid) {
+    toast('먼저 위 목록에서 삭제할 거래명세표(세션)를 선택하세요', 'err');
+    return;
+  }
+  const label = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+  if (!confirm(`이 거래명세표를 삭제할까요?\n\n${label}\n\n⚠ 해당 세션의 주문·후보·보관상태가 모두 함께 삭제되며 되돌릴 수 없습니다.`)) return;
+  const btn = document.getElementById('deleteSessionBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '삭제 중...'; }
+  try {
+    const r = await fetch(API + '/api/sessions/' + sid, { method: 'DELETE' });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      toast('🗑 거래명세표 삭제 완료', 'ok');
+      sel.value = '';
+      loadAutoSessionFilter();
+      loadAutoPage();
+      if (typeof loadBuyerInvoiceSessions === 'function') loadBuyerInvoiceSessions();
+      if (typeof loadConsignSessions === 'function') loadConsignSessions();
+    } else {
+      toast('삭제 실패: ' + (d.error || '알 수 없는 오류'), 'err');
+    }
+  } catch(e) {
+    toast('서버에 연결할 수 없습니다', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🗑 이 거래명세표 삭제'; }
+  }
 }
 
 async function loadAutoPage() {
@@ -1607,7 +1652,7 @@ async function loadConsign() {
     if (groups.length > 0) { badge.textContent = groups.length; badge.classList.add('show'); }
     else { badge.classList.remove('show'); badge.textContent = ''; }
     if (!groups.length) {
-      container.innerHTML = '<div class="card"><div class="card-body" style="text-align:center;color:var(--muted);padding:40px;">위탁(-XXX위탁) 항목이 있는 입금확인 주문이 없습니다</div></div>';
+      container.innerHTML = '<div class="card"><div class="card-body" style="text-align:center;color:var(--muted);padding:40px;">상품명에 \'위탁\'이 들어간 주문이 없습니다</div></div>';
       return;
     }
     const fmt = (n) => Number(n || 0).toLocaleString();
@@ -1618,11 +1663,14 @@ async function loadConsign() {
 }
 
 function renderConsignGroup(g, fmt) {
+  const buyer = g.buyer || g.consignor || '(이름없음)';
   const dateKr = (() => {
     if (!g.live_date) return '';
     const d = new Date(g.live_date + 'T00:00:00');
     return `${d.getMonth()+1}월 ${d.getDate()}일`;
   })();
+  const fnameNoExt = (g.filename || '').replace(/\.[^.]+$/, '');
+  const titleText = `${buyer} ${fnameNoExt}`.trim();
   const rowsHtml = g.rows.map(r => {
     const dt = (() => {
       if (!r.live_date) return '';
@@ -1632,29 +1680,29 @@ function renderConsignGroup(g, fmt) {
     const checked = r.is_3rd_party ? 'checked' : '';
     return `
       <tr>
-        <td style="text-align:center;background:#f7f7f7;color:#222;">${dt}</td>
-        <td style="text-align:center;background:#f7f7f7;color:#222;">${r.no}</td>
-        <td style="background:#FFC080;color:#222;">${r.item_name||''}</td>
-        <td style="text-align:right;background:#fff;color:#222;font-family:'DM Mono',monospace;">${fmt(r.price)}</td>
+        <td style="text-align:center;background:#fff;color:#222;">${dt}</td>
+        <td style="text-align:center;background:#fff;color:#222;">${r.no}</td>
+        <td style="background:#fff;color:#222;text-align:left;">${r.item_name||''}</td>
+        <td style="text-align:right;background:#fff;color:#222;">${fmt(r.price)}</td>
         <td style="text-align:center;background:#fff;color:#222;">${r.qty}</td>
-        <td style="text-align:right;background:#fff;color:#222;font-family:'DM Mono',monospace;">${fmt(r.sale_total)}</td>
+        <td style="text-align:right;background:#fff;color:#222;">${fmt(r.sale_total)}</td>
         <td style="text-align:center;background:#FFA500;color:#222;font-weight:600;">
           <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;">
             <input type="checkbox" ${checked} onchange="toggle3rdParty(${r.order_id}, this.checked)" style="width:15px;height:15px;cursor:pointer;">
             <span data-third="${r.order_id}">${r.third_factor}</span>
           </label>
         </td>
-        <td style="text-align:center;background:#FFA500;color:#222;">${r.live_factor}</td>
-        <td style="text-align:right;background:#9BE6A1;color:#222;font-family:'DM Mono',monospace;font-weight:600;" data-after-platform="${r.order_id}">${fmt(r.after_platform)}</td>
-        <td style="text-align:right;background:#9BE6A1;color:#222;font-family:'DM Mono',monospace;font-weight:600;" data-after-remit="${r.order_id}">${fmt(r.after_remit)}</td>
+        <td style="text-align:center;background:#fff;color:#222;">${r.live_factor}</td>
+        <td style="text-align:right;background:#9BE6A1;color:#222;font-weight:600;" data-after-platform="${r.order_id}">${fmt(r.after_platform)}</td>
+        <td style="text-align:right;background:#9BE6A1;color:#222;font-weight:600;" data-after-remit="${r.order_id}">${fmt(r.after_remit)}</td>
       </tr>`;
   }).join('');
 
   return `
-    <div class="card" style="margin-bottom:20px;border-color:#FFA500;">
+    <div class="card consign-card" style="margin-bottom:20px;border-color:#FFA500;">
       <div class="card-head" style="background:#fff8e6;color:#222;">
-        <h3 style="color:#222;">${dateKr} ${g.consignor} / 유튜브</h3>
-        <button class="btn btn-blue" onclick="downloadConsignExcel('${g.consignor.replace(/['"\\]/g,'')}', ${g.rows[0] && g.rows[0].order_id ? '' : ''})">⬇ 엑셀 다운로드</button>
+        <h3 style="color:#222;">${_esc(titleText)}</h3>
+        <button class="btn btn-blue" onclick="downloadConsignExcel('${buyer.replace(/['"\\]/g,'')}')">⬇ 엑셀 다운로드</button>
       </div>
       <div class="tbl-wrap" style="background:#fff;">
         <table style="background:#fff;color:#222;table-layout:auto;width:100%;">
@@ -1667,12 +1715,12 @@ function renderConsignGroup(g, fmt) {
               <th style="color:#222;text-align:center;width:60px;">수량</th>
               <th style="color:#222;text-align:center;width:90px;">판매가 합</th>
               <th style="color:#222;text-align:center;width:120px;background:#FFA500;">타업체<br>제품 유무(10%)</th>
-              <th style="color:#222;text-align:center;width:100px;background:#FFA500;">라방판매(20%)</th>
+              <th style="color:#222;text-align:center;width:100px;">라방판매(20%)</th>
               <th style="color:#222;text-align:center;width:170px;background:#9BE6A1;">라방플랫폼수수료 제외 가격<br>(적립금 100% 사용가능)</th>
               <th style="color:#222;text-align:center;width:130px;background:#9BE6A1;">송금 정산 시<br>가격 (20% 제)</th>
             </tr>
           </thead>
-          <tbody data-consignor="${g.consignor}">${rowsHtml}</tbody>
+          <tbody data-buyer="${_esc(buyer)}">${rowsHtml}</tbody>
           <tfoot>
             <tr style="background:#FFFF66;color:#222;font-weight:700;">
               <td colspan="8" style="text-align:right;color:#222;">합계</td>
@@ -1701,9 +1749,9 @@ async function toggle3rdParty(orderId, checked) {
   } catch(e) { toast('서버 연결 실패', 'err'); }
 }
 
-function downloadConsignExcel(consignor) {
+function downloadConsignExcel(buyer) {
   const sid = (document.getElementById('consignSessionFilter')||{}).value;
-  const url = API + '/api/consignment/excel?consignor=' + encodeURIComponent(consignor)
+  const url = API + '/api/consignment/excel?buyer=' + encodeURIComponent(buyer)
             + (sid ? '&session_id=' + sid : '');
   const a = document.createElement('a');
   a.href = url;
@@ -1714,6 +1762,7 @@ function downloadConsignExcel(consignor) {
 // v17: 회원명단
 // ══════════════════════════════════════════════════════════════════
 let _membersAll = [];
+let _membersEditMode = false;   // false=복사모드(기본), true=수정모드
 function _esc(s){ return (s||'').toString().replace(/[<>"'&]/g, c=>({"<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","&":"&amp;"})[c]); }
 function _renderMembersFiltered(filtered) {
   const tb = document.getElementById('membersTbody');
@@ -1723,17 +1772,69 @@ function _renderMembersFiltered(filtered) {
     return;
   }
   tb.innerHTML = filtered.map(m => {
-    const ed = (field, val) => `<span class="ed" contenteditable="true" data-id="${m.id}" data-field="${field}" onblur="saveMemberField(this)">${_esc(val)}</span>`;
+    let cell;
+    if (_membersEditMode) {
+      // 수정모드: 클릭하면 편집 가능 + 자동저장
+      cell = (field, val) => `<span class="ed" contenteditable="true" data-id="${m.id}" data-field="${field}" onblur="saveMemberField(this)">${_esc(val)}</span>`;
+    } else {
+      // 복사모드(기본): 클릭하면 그 칸 내용 자동 전체선택+복사
+      cell = (field, val) => `<span class="ed copyable" data-id="${m.id}" data-field="${field}" onclick="copyCell(this)" title="클릭하면 복사됩니다">${_esc(val)}</span>`;
+    }
     return `
       <tr>
-        <td><strong>${ed('name', m.name||'')}</strong></td>
-        <td style="font-family:'DM Mono',monospace;">${ed('phone', m.phone||'')}</td>
-        <td>${ed('postal_code', m.postal_code||'')}</td>
-        <td style="word-break:break-all;white-space:normal;">${ed('address', m.address||'')}</td>
-        <td style="word-break:break-all;white-space:normal;color:var(--muted);">${ed('message', m.message||'')}</td>
+        <td><strong>${cell('name', m.name||'')}</strong></td>
+        <td style="font-family:'DM Mono',monospace;">${cell('phone', m.phone||'')}</td>
+        <td>${cell('postal_code', m.postal_code||'')}</td>
+        <td style="word-break:break-all;white-space:normal;">${cell('address', m.address||'')}</td>
+        <td style="word-break:break-all;white-space:normal;color:var(--muted);">${cell('message', m.message||'')}</td>
         <td><button class="btn" style="padding:4px 8px;background:#666;color:#fff;" onclick="deleteMember(${m.id})">🗑</button></td>
       </tr>`;
   }).join('');
+}
+
+// ✏ 수정모드 ↔ 복사모드 토글
+function toggleMembersEdit() {
+  _membersEditMode = !_membersEditMode;
+  const btn = document.getElementById('membersEditBtn');
+  const hint = document.getElementById('membersHint');
+  if (_membersEditMode) {
+    btn.innerHTML = '✔ 수정 완료';
+    btn.classList.add('btn-primary');
+    btn.classList.remove('btn-secondary');
+    if (hint) hint.innerHTML = '✏ <strong style="color:var(--green)">수정모드</strong> — 각 칸을 클릭해 바로 수정하세요 (자동저장). 끝나면 <strong style="color:var(--text)">✔ 수정 완료</strong>를 누르세요.';
+  } else {
+    btn.innerHTML = '✏ 내용 수정';
+    btn.classList.add('btn-secondary');
+    btn.classList.remove('btn-primary');
+    if (hint) hint.innerHTML = '💡 칸을 클릭하면 해당 칸 내용이 자동 복사됩니다. 수정하려면 오른쪽 위 <strong style="color:var(--text)">✏ 내용 수정</strong> 버튼을 누르세요.';
+  }
+  // 현재 검색 결과 유지한 채 다시 렌더
+  filterMembers();
+}
+
+// 📋 칸 클릭 → 전체선택 + 클립보드 복사 (Ctrl+C 효과)
+function copyCell(el) {
+  const text = (el.innerText || '').trim();
+  // 시각적으로 전체선택 표시
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch(e) {}
+  const done = () => {
+    el.classList.add('copied');
+    setTimeout(() => { el.classList.remove('copied'); try { window.getSelection().removeAllRanges(); } catch(e){} }, 700);
+    toast('📋 복사됨: ' + (text.length > 20 ? text.slice(0,20) + '…' : text), 'ok');
+  };
+  if (!text) { toast('복사할 내용이 없습니다', 'err'); return; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => { try { document.execCommand('copy'); } catch(e){} done(); });
+  } else {
+    try { document.execCommand('copy'); } catch(e) {}
+    done();
+  }
 }
 async function loadMembers() {
   try {
