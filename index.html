@@ -809,7 +809,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="card" style="margin-bottom:16px;">
     <div class="card-head">
       <h3>💰 위탁판매 정산</h3>
-      <div style="font-size:13px;color:var(--muted);">상품명에 <strong style="color:var(--text)">'위탁'</strong>이 들어간 모든 주문(대기 포함)을 <strong style="color:var(--text)">구매자별</strong>로 자동 집계합니다</div>
+      <div style="font-size:13px;color:var(--muted);">상품명에 <strong style="color:var(--text)">'위탁'</strong>이 들어간 모든 주문(대기 포함)을 <strong style="color:var(--text)">위탁자 코드별</strong>(-SSAC위탁→SSAC, -IB위탁품→IB)로 자동 집계합니다</div>
     </div>
     <div class="card-body">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -1663,14 +1663,14 @@ async function loadConsign() {
 }
 
 function renderConsignGroup(g, fmt) {
-  const buyer = g.buyer || g.consignor || '(이름없음)';
+  const consignor = g.consignor || g.buyer || '(기타)';
   const dateKr = (() => {
     if (!g.live_date) return '';
     const d = new Date(g.live_date + 'T00:00:00');
     return `${d.getMonth()+1}월 ${d.getDate()}일`;
   })();
   const fnameNoExt = (g.filename || '').replace(/\.[^.]+$/, '');
-  const titleText = `${buyer} ${fnameNoExt}`.trim();
+  const titleText = [dateKr, fnameNoExt].filter(Boolean).join(' ') + ' / 유튜브';
   const rowsHtml = g.rows.map(r => {
     const dt = (() => {
       if (!r.live_date) return '';
@@ -1701,8 +1701,8 @@ function renderConsignGroup(g, fmt) {
   return `
     <div class="card consign-card" style="margin-bottom:20px;border-color:#FFA500;">
       <div class="card-head" style="background:#fff8e6;color:#222;">
-        <h3 style="color:#222;">${_esc(titleText)}</h3>
-        <button class="btn btn-blue" onclick="downloadConsignExcel('${buyer.replace(/['"\\]/g,'')}')">⬇ 엑셀 다운로드</button>
+        <h3 style="color:#222;">${_esc(titleText)} <span style="font-weight:400;font-size:14px;color:#888;">· 위탁자: ${_esc(consignor)}</span></h3>
+        <button class="btn btn-blue" onclick="downloadConsignExcel('${consignor.replace(/['"\\]/g,'')}')">⬇ 엑셀 다운로드</button>
       </div>
       <div class="tbl-wrap" style="background:#fff;">
         <table style="background:#fff;color:#222;table-layout:auto;width:100%;">
@@ -1720,7 +1720,7 @@ function renderConsignGroup(g, fmt) {
               <th style="color:#222;text-align:center;width:130px;background:#9BE6A1;">송금 정산 시<br>가격 (20% 제)</th>
             </tr>
           </thead>
-          <tbody data-buyer="${_esc(buyer)}">${rowsHtml}</tbody>
+          <tbody data-consignor="${_esc(consignor)}">${rowsHtml}</tbody>
           <tfoot>
             <tr style="background:#FFFF66;color:#222;font-weight:700;">
               <td colspan="8" style="text-align:right;color:#222;">합계</td>
@@ -1749,9 +1749,9 @@ async function toggle3rdParty(orderId, checked) {
   } catch(e) { toast('서버 연결 실패', 'err'); }
 }
 
-function downloadConsignExcel(buyer) {
+function downloadConsignExcel(consignor) {
   const sid = (document.getElementById('consignSessionFilter')||{}).value;
-  const url = API + '/api/consignment/excel?buyer=' + encodeURIComponent(buyer)
+  const url = API + '/api/consignment/excel?consignor=' + encodeURIComponent(consignor)
             + (sid ? '&session_id=' + sid : '');
   const a = document.createElement('a');
   a.href = url;
