@@ -250,6 +250,7 @@ input::placeholder { color: var(--dim); }
 }
 .invoice-table th, .invoice-table td {
   border:1px solid #b0b0b0; padding:5px 8px; text-align:center; color:#000;
+  white-space: normal; word-break: break-word; overflow-wrap: anywhere;
 }
 .invoice-table th {
   background:#e2efda; font-weight:600;
@@ -1299,7 +1300,6 @@ async function storeConfirmedBuyer(sid, buyer) {
   } catch(e) { toast('서버 연결 실패', 'err'); }
 }
 async function shipConfirmedBuyer(sid, buyer) {
-  if (!confirm(`'${buyer}' 배송완료 처리할까요?\n입금확인 목록에서 제외됩니다.`)) return;
   try {
     const r = await fetch(API + '/api/buyer/status', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1585,7 +1585,6 @@ async function bulkAutoConfirm() {
     const row = cb.closest('tr');
     return { session_id: parseInt(row.dataset.session), buyer_name: row.dataset.buyer };
   });
-  if (!confirm(`선택한 ${targets.length}명을 수동 입금확인 처리하시겠습니까?`)) return;
   const btn = document.getElementById('bulkAutoConfirmBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 처리 중...';
   let ok = 0;
@@ -2443,7 +2442,6 @@ async function addManualStored() {
 
 async function setBuyerStatus(sessionId, buyer, status) {
   const labels = {stored: '식물 보관', shipped: '배송 완료', reset: '되돌리기'};
-  if (status === 'shipped' && !confirm(`${buyer} — 배송 완료로 처리할까요? 목록에서 사라집니다.`)) return;
   try {
     const r = await fetch(API + '/api/buyer/status', {
       method: 'POST',
@@ -2469,7 +2467,7 @@ async function downloadBuyerPng(renderId, buyerName) {
     return;
   }
   try {
-    const canvas = await html2canvas(el, {backgroundColor:'#ffffff', scale: 2});
+    const canvas = await html2canvas(el, {backgroundColor:'#ffffff', scale: 2, useCORS:true, width: el.scrollWidth, height: el.scrollHeight, windowWidth: el.scrollWidth, windowHeight: el.scrollHeight, scrollX:0, scrollY:0});
     const dataUrl = canvas.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = dataUrl;
@@ -2500,7 +2498,7 @@ async function downloadAllBuyerPngs() {
     for (const r of renders) {
       const name = r.closest('.invoice-card').querySelector('.name').textContent;
       btn.innerHTML = `<span class="spinner"></span> ${++done}/${renders.length}...`;
-      const canvas = await html2canvas(r, {backgroundColor:'#ffffff', scale: 2});
+      const canvas = await html2canvas(r, {backgroundColor:'#ffffff', scale: 2, useCORS:true, width: r.scrollWidth, height: r.scrollHeight, windowWidth: r.scrollWidth, windowHeight: r.scrollHeight, scrollX:0, scrollY:0});
       const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
       const safe = name.replace(/[\\/:*?"<>|]/g, '_');
       zip.file(`${safe}_거래명세서.png`, blob);
