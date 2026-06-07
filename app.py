@@ -206,8 +206,9 @@ def upload_session():
     except ValueError:
         return jsonify({'error': f'라이브 날짜 형식 오류: {live_date}'}), 400
 
-    check_start = live_dt.strftime('%Y-%m-%d')
-    check_end   = (live_dt + timedelta(days=7)).strftime('%Y-%m-%d')
+    # 7일 자동확인: 라방날짜 +1일부터 시작
+    check_start = (live_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+    check_end   = (live_dt + timedelta(days=8)).strftime('%Y-%m-%d')
     logger.info(f"📅 live_date 결정: {live_date} (source={live_date_source})")
 
     conn = get_conn()
@@ -1415,9 +1416,12 @@ def get_check_logs():
 
     session = dict(session)
 
-    # 7일 날짜 생성
+    # 7일 날짜 생성 — 라방날짜 +1일부터 시작 (check_start 미설정/구버전 세션도 안전)
     from datetime import date
-    start = datetime.strptime(session['check_start'], '%Y-%m-%d').date()
+    try:
+        start = datetime.strptime(session['live_date'], '%Y-%m-%d').date() + timedelta(days=1)
+    except Exception:
+        start = datetime.strptime(session['check_start'], '%Y-%m-%d').date()
     days = []
     for i in range(7):
         d = start + timedelta(days=i)
@@ -2126,7 +2130,7 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
 
 
 def run_auto_check():
-    """매일 30분마다 + 수동: 아임웹 카드결제 + 미매칭 SMS 재대조 (SUM 합산 + 의심후보)"""
+    """15분마다 + 수동: 아임웹 카드결제 + 미매칭 SMS 재대조 (SUM 합산 + 의심후보)"""
     logger.info("자동 입금확인 시작...")
     today    = datetime.now().strftime('%Y-%m-%d')
     today_ym = today.replace('-', '')
@@ -2250,13 +2254,13 @@ def _ensure_scheduler():
         return
     try:
         sched = BackgroundScheduler(timezone='Asia/Seoul')
-        # 첫 실행: 서버 기동 10초 뒤 즉시 1회 → 이후 30분마다
-        sched.add_job(run_auto_check, 'interval', minutes=30,
+        # 첫 실행: 서버 기동 10초 뒤 즉시 1회 → 이후 15분마다
+        sched.add_job(run_auto_check, 'interval', minutes=15,
                       id='interval_check', replace_existing=True,
                       next_run_time=datetime.now() + timedelta(seconds=10))
         sched.start()
         _SCHEDULER_STARTED = True
-        logger.info("⏰ 스케줄러 시작 (10초 후 1회 + 30분마다)")
+        logger.info("⏰ 스케줄러 시작 (10초 후 1회 + 15분마다)")
     except Exception as e:
         logger.error(f"스케줄러 시작 실패: {e}")
 
