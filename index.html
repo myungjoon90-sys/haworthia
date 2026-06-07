@@ -18,8 +18,21 @@
 .consign-card, .consign-card th, .consign-card td, .consign-card h3 {
   font-family: 'Malgun Gothic', '맑은 고딕', 'Apple SD Gothic Neo', sans-serif;
 }
-.consign-card th, .consign-card td { font-size: 14px; }
+.consign-card th, .consign-card td { font-size: 14px; padding: 7px 9px; }
 .consign-card h3 { font-size: 17px; }
+/* 헤더: 흰색 바탕 + 굵은 검정 글씨 (기존 어두운 th 무력화) */
+.consign-card th {
+  background: #ffffff; color: #222; font-weight: 700;
+  text-transform: none; letter-spacing: 0; border-bottom: 1px solid #d9d9d9;
+}
+.consign-card td { border-bottom: 1px solid #eee; }
+.consign-card tr:hover td { background: inherit; }
+/* 한 화면에 보이도록: 정산표는 가로스크롤 없이 표시 */
+.consign-card .tbl-wrap { overflow-x: visible; }
+.consign-card table { table-layout: fixed; width: 100%; }
+.consign-card td:nth-child(3) { white-space: normal; word-break: break-all; }
+/* 위탁정산 페이지일 때 본문 폭 확장 */
+body.page-consign-active .container { max-width: 1500px; }
 
 :root {
   --bg: #0d1117; --surface: #161b22; --surface2: #1c2330;
@@ -923,6 +936,9 @@ function showPage(id) {
   document.getElementById('page-' + id).classList.add('active');
   document.getElementById('nav-' + id).classList.add('active');
 
+  // 위탁정산 페이지는 표가 넓어 가로스크롤이 없도록 본문 폭을 확장
+  document.body.classList.toggle('page-consign-active', id === 'consign');
+
   if (id === 'invoice')  { loadBuyerInvoiceSessions(); }
   if (id === 'auto')     { loadAutoPage(); loadAutoSessionFilter(); }
   if (id === 'delivery') { loadDelivery(); loadSessionFilter(); }
@@ -1702,7 +1718,10 @@ function renderConsignGroup(g, fmt) {
     <div class="card consign-card" style="margin-bottom:20px;border-color:#FFA500;">
       <div class="card-head" style="background:#fff8e6;color:#222;">
         <h3 style="color:#222;">${_esc(titleText)} <span style="font-weight:400;font-size:14px;color:#888;">· 위탁자: ${_esc(consignor)}</span></h3>
-        <button class="btn btn-blue" onclick="downloadConsignExcel('${consignor.replace(/['"\\]/g,'')}')">⬇ 엑셀 다운로드</button>
+        <span class="consign-actions" style="display:flex;gap:8px;">
+          <button class="btn" style="background:#16a34a;color:#fff;" onclick="downloadConsignImage(this, '${consignor.replace(/['"\\]/g,'')}')">🖼 이미지 저장</button>
+          <button class="btn btn-blue" onclick="downloadConsignExcel('${consignor.replace(/['"\\]/g,'')}')">⬇ 엑셀 다운로드</button>
+        </span>
       </div>
       <div class="tbl-wrap" style="background:#fff;">
         <table style="background:#fff;color:#222;table-layout:auto;width:100%;">
@@ -1756,6 +1775,29 @@ function downloadConsignExcel(consignor) {
   const a = document.createElement('a');
   a.href = url;
   a.click();
+}
+
+// 🖼 위탁정산 카드를 이미지(PNG)로 저장
+async function downloadConsignImage(btn, consignor) {
+  const card = btn.closest('.consign-card');
+  if (!card || typeof html2canvas !== 'function') { toast('이미지 변환기 로드 실패', 'err'); return; }
+  const actions = card.querySelector('.consign-actions');
+  if (actions) actions.style.visibility = 'hidden';   // 버튼은 이미지에서 숨김
+  const orig = btn.textContent;
+  btn.textContent = '저장 중...';
+  try {
+    const canvas = await html2canvas(card, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `위탁정산_${consignor}.png`;
+    a.click();
+    toast(`🖼 ${consignor} 이미지 저장됨`, 'ok');
+  } catch(e) {
+    toast('이미지 저장 실패: ' + (e.message||''), 'err');
+  } finally {
+    if (actions) actions.style.visibility = '';
+    btn.textContent = orig;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
