@@ -23,14 +23,18 @@
 /* 헤더: 흰색 바탕 + 굵은 검정 글씨 (기존 어두운 th 무력화) */
 .consign-card th {
   background: #ffffff; color: #222; font-weight: 700;
-  text-transform: none; letter-spacing: 0; border-bottom: 1px solid #d9d9d9;
+  text-transform: none; letter-spacing: 0;
 }
-.consign-card td { border-bottom: 1px solid #eee; }
+/* 모든 셀에 얇은 검정 테두리 */
+.consign-card table { border-collapse: collapse; table-layout: fixed; width: auto; }
+.consign-card th, .consign-card td { border: 1px solid #000; }
 .consign-card tr:hover td { background: inherit; }
 /* 한 화면에 보이도록: 정산표는 가로스크롤 없이 표시 */
 .consign-card .tbl-wrap { overflow-x: visible; }
-.consign-card table { table-layout: fixed; width: 100%; }
-.consign-card td:nth-child(3) { white-space: normal; word-break: break-all; }
+/* 이름 칸: 폭 절반으로 축소 + 자동 줄바꿈 */
+.consign-card th:nth-child(3), .consign-card td:nth-child(3) {
+  width: 160px; white-space: normal; word-break: break-all;
+}
 /* 위탁정산 페이지일 때 본문 폭 확장 */
 body.page-consign-active .container { max-width: 1500px; }
 
@@ -488,7 +492,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         </div>
       </div>
       <div style="font-size:13px;color:var(--muted);margin-top:10px;">
-        📌 등록하면 <strong style="color:var(--text)">방송일 +1일부터 7일간</strong> 30분마다 아임웹 카드결제 + SMS 입금을 자동 확인합니다.
+        📌 등록하면 <strong style="color:var(--text)">방송일 +1일부터 7일간</strong> 15분마다 아임웹 카드결제 + SMS 입금을 자동 확인합니다.
       </div>
     </div>
   </div>
@@ -517,7 +521,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="timeline-wrap" id="timelineWrap" style="display:none;">
     <div class="timeline-title">
       <span>📅 7일 자동확인 진행현황</span>
-      <span style="font-size:12px;color:var(--muted);">30분마다 자동 실행</span>
+      <span style="font-size:12px;color:var(--muted);">15분마다 자동 실행</span>
     </div>
     <div class="timeline-row" id="timelineRow"></div>
     <div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted);flex-wrap:wrap;">
@@ -630,7 +634,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <div class="tbl-wrap">
         <table style="table-layout:auto;">
           <thead><tr>
-            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>결제방법</th><th>확인일시</th><th style="width:90px;text-align:center;">보관</th>
+            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>결제방법</th><th>확인일시</th><th style="width:190px;text-align:center;">보관 / 배송</th>
           </tr></thead>
           <tbody id="confirmedTbody">
             <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>
@@ -1224,8 +1228,10 @@ let _storedMap = {};  // {"sid:buyer": status} — v23
 function renderConfirmed(items) {
   const tbody = document.getElementById('confirmedTbody');
   const storedTbody = document.getElementById('storedConfirmedTbody');
-  const isStored = (i) => _storedMap[`${i.session_id}:${i.buyer_name}`] === 'stored';
-  const normal = items.filter(i => !isStored(i));
+  const statusOf = (i) => _storedMap[`${i.session_id}:${i.buyer_name}`];
+  const isStored = (i) => statusOf(i) === 'stored';
+  const isShipped = (i) => statusOf(i) === 'shipped';
+  const normal = items.filter(i => !isStored(i) && !isShipped(i));   // 배송완료건은 목록에서 제외
   const stored = items.filter(i => isStored(i));
 
   document.getElementById('auto-confirmed').textContent = normal.length;
@@ -1238,7 +1244,10 @@ function renderConfirmed(items) {
   const fmt = (i, withStoreBtn) => {
     const safeBuyer = (i.buyer_name||'').replace(/['"\\]/g, '');
     const btn = withStoreBtn
-      ? `<button class="btn" style="padding:4px 10px;background:#f59e0b;color:#fff;" onclick="storeConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="식물 보관으로 이동">📦 보관</button>`
+      ? `<div style="display:inline-flex;gap:6px;justify-content:center;">
+           <button class="btn" style="padding:4px 10px;background:#f59e0b;color:#fff;" onclick="storeConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="식물 보관으로 이동">📦 보관</button>
+           <button class="btn" style="padding:4px 10px;background:#16a34a;color:#fff;" onclick="shipConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="배송 완료 → 목록에서 제외">🚚 배송완료</button>
+         </div>`
       : `<button class="btn" style="padding:4px 10px;background:#6b7280;color:#fff;" onclick="unstoreConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="보관 해제 → 입금확인 탭으로 복귀">↩️ 복귀</button>`;
     return `
       <tr>
@@ -1286,6 +1295,18 @@ async function storeConfirmedBuyer(sid, buyer) {
     });
     const d = await r.json();
     if (d.ok) { toast(`📦 '${buyer}' 보관으로 이동`, 'ok'); loadAutoPage(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+async function shipConfirmedBuyer(sid, buyer) {
+  if (!confirm(`'${buyer}' 배송완료 처리할까요?\n입금확인 목록에서 제외됩니다.`)) return;
+  try {
+    const r = await fetch(API + '/api/buyer/status', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sid, buyer_name: buyer, status: 'shipped'})
+    });
+    const d = await r.json();
+    if (d.ok) { toast(`🚚 '${buyer}' 배송완료`, 'ok'); loadAutoPage(); }
     else toast('오류: ' + (d.error || '실패'), 'err');
   } catch(e) { toast('서버 연결 실패', 'err'); }
 }
