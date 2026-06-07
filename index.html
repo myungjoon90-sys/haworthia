@@ -694,7 +694,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-secondary" onclick="loadBuyerInvoices()">🔄 새로고침</button>
         <button class="btn btn-blue" onclick="downloadAllBuyerPngs()" id="zipAllBtn">📦 전체 ZIP 다운로드</button>
       </div>
-      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(504px,1fr));gap:12px;margin-top:12px;">
+      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(454px,1fr));gap:12px;margin-top:12px;">
         <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">세션을 선택하세요</div>
       </div>
     </div>
@@ -842,6 +842,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
           <option value="">전체 세션</option>
         </select>
         <button class="btn btn-secondary" onclick="loadConsign()">🔄 새로고침</button>
+        <button class="btn btn-primary" id="consignZipBtn" onclick="downloadAllConsignExcel()">📦 전체 엑셀 ZIP</button>
       </div>
       <p style="font-size:13px;color:var(--muted);margin-top:8px;">
         💡 <strong>타업체 제품 유무</strong> 체크박스를 누르면 즉시 수수료가 0.9로 반영되고 DB에 자동 저장됩니다.
@@ -1697,6 +1698,7 @@ async function loadConsign() {
   try {
     const r = await fetch(API + '/api/consignment/list' + qs);
     const groups = await r.json();
+    _consignGroups = groups;
     const badge = document.getElementById('badge-consign');
     if (groups.length > 0) { badge.textContent = groups.length; badge.classList.add('show'); }
     else { badge.classList.remove('show'); badge.textContent = ''; }
@@ -1760,15 +1762,15 @@ function renderConsignGroup(g, fmt) {
         <table style="background:#fff;color:#222;table-layout:auto;width:100%;">
           <thead style="background:#f7f7f7;color:#222;">
             <tr>
-              <th style="color:#222;text-align:center;width:80px;">정산<br>날짜</th>
+              <th style="color:#222;text-align:center;width:60px;">정산<br>날짜</th>
               <th style="color:#222;text-align:center;width:50px;">번호</th>
               <th style="color:#222;text-align:center;">이름</th>
-              <th style="color:#222;text-align:center;width:90px;">가격</th>
+              <th style="color:#222;text-align:center;width:70px;">가격</th>
               <th style="color:#222;text-align:center;width:60px;">수량</th>
-              <th style="color:#222;text-align:center;width:90px;">판매가 합</th>
+              <th style="color:#222;text-align:center;width:70px;">판매가 합</th>
               <th style="color:#222;text-align:center;width:95px;background:#FFA500;">타업체<br>제품 유무(10%)</th>
-              <th style="color:#222;text-align:center;width:80px;">라방판매(20%)</th>
-              <th style="color:#222;text-align:center;width:140px;background:#9BE6A1;">라방플랫폼수수료 제외 가격<br>(적립금 100% 사용가능)</th>
+              <th style="color:#222;text-align:center;width:60px;">라방판매(20%)</th>
+              <th style="color:#222;text-align:center;width:120px;background:#9BE6A1;">라방플랫폼수수료 제외 가격<br>(적립금 100% 사용가능)</th>
               <th style="color:#222;text-align:center;width:78px;background:#9BE6A1;">송금 정산 시<br>가격 (20% 제)</th>
             </tr>
           </thead>
@@ -1799,6 +1801,43 @@ async function toggle3rdParty(orderId, checked) {
       toast('수정 실패: ' + (d.error||''), 'err');
     }
   } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+let _consignGroups = [];
+// 📦 표시된 모든 위탁자의 정산 엑셀을 한 번에 ZIP으로 다운로드
+async function downloadAllConsignExcel() {
+  if (typeof JSZip !== 'function') { toast('압축 라이브러리 로드 실패', 'err'); return; }
+  if (!_consignGroups || !_consignGroups.length) { toast('정산할 위탁자가 없습니다', 'err'); return; }
+  const sid = (document.getElementById('consignSessionFilter')||{}).value;
+  const btn = document.getElementById('consignZipBtn');
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 생성 중...'; }
+  try {
+    const zip = new JSZip();
+    let n = 0;
+    for (const g of _consignGroups) {
+      const cons = g.consignor;
+      if (btn) btn.innerHTML = `<span class="spinner"></span> ${++n}/${_consignGroups.length}...`;
+      const url = API + '/api/consignment/excel?consignor=' + encodeURIComponent(cons) + (sid ? '&session_id=' + sid : '');
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const blob = await resp.blob();
+      const safe = String(cons).replace(/[\\/:*?"<>|]/g, '_');
+      zip.file(`위탁정산_${safe}.xlsx`, blob);
+    }
+    const zipBlob = await zip.generateAsync({type:'blob'});
+    const ts = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(zipBlob);
+    a.download = `위탁정산_전체_${ts}.zip`;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 100);
+    toast(`✅ ${_consignGroups.length}개 위탁자 ZIP 다운로드 완료`, 'ok');
+  } catch(e) {
+    toast('ZIP 생성 실패: ' + (e.message||''), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
 }
 
 function downloadConsignExcel(consignor) {
