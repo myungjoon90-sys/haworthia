@@ -35,6 +35,8 @@
 .consign-card th:nth-child(3), .consign-card td:nth-child(3) {
   width: 240px; white-space: normal; word-break: break-all;
 }
+/* 송금 정산 시 가격(10번째 열): 금액 줄바꿈 금지 */
+.consign-card th:nth-child(10), .consign-card td:nth-child(10) { white-space: nowrap; }
 /* 위탁정산 페이지일 때 본문 폭 확장 */
 body.page-consign-active .container { max-width: 1500px; }
 
@@ -692,7 +694,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-secondary" onclick="loadBuyerInvoices()">🔄 새로고침</button>
         <button class="btn btn-blue" onclick="downloadAllBuyerPngs()" id="zipAllBtn">📦 전체 ZIP 다운로드</button>
       </div>
-      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(630px,1fr));gap:12px;margin-top:12px;">
+      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(504px,1fr));gap:12px;margin-top:12px;">
         <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">세션을 선택하세요</div>
       </div>
     </div>
@@ -1767,15 +1769,15 @@ function renderConsignGroup(g, fmt) {
               <th style="color:#222;text-align:center;width:95px;background:#FFA500;">타업체<br>제품 유무(10%)</th>
               <th style="color:#222;text-align:center;width:80px;">라방판매(20%)</th>
               <th style="color:#222;text-align:center;width:140px;background:#9BE6A1;">라방플랫폼수수료 제외 가격<br>(적립금 100% 사용가능)</th>
-              <th style="color:#222;text-align:center;width:55px;background:#9BE6A1;">송금 정산 시<br>가격 (20% 제)</th>
+              <th style="color:#222;text-align:center;width:78px;background:#9BE6A1;">송금 정산 시<br>가격 (20% 제)</th>
             </tr>
           </thead>
           <tbody data-consignor="${_esc(consignor)}">${rowsHtml}</tbody>
           <tfoot>
             <tr style="background:#FFFF66;color:#222;font-weight:700;">
               <td colspan="8" style="text-align:right;color:#222;">합계</td>
-              <td style="text-align:right;color:#222;font-family:'맑은 고딕','Malgun Gothic',sans-serif;" data-sum-platform>${fmt(g.sum_after_platform)}</td>
-              <td style="text-align:right;color:#222;font-family:'맑은 고딕','Malgun Gothic',sans-serif;" data-sum-remit>${fmt(g.sum_after_remit)}</td>
+              <td style="text-align:right;color:#222;font-family:'맑은 고딕','Malgun Gothic',sans-serif;white-space:nowrap;" data-sum-platform>${fmt(g.sum_after_platform)}</td>
+              <td style="text-align:right;color:#222;font-family:'맑은 고딕','Malgun Gothic',sans-serif;white-space:nowrap;" data-sum-remit>${fmt(g.sum_after_remit)}</td>
             </tr>
           </tfoot>
         </table>
@@ -2360,10 +2362,10 @@ function renderInvoiceHtml(sess, buyer, orders, total) {
     <table class="invoice-table">
       <thead>
         <tr>
-          <th style="width:17%;">구매자</th>
-          <th style="width:10%;">번호</th>
-          <th style="width:28%;">하월시아 이름</th>
-          <th style="width:30%;">판매가격</th>
+          <th style="width:21%;">구매자</th>
+          <th style="width:13%;">번호</th>
+          <th style="width:36%;">하월시아 이름</th>
+          <th style="width:15%;">판매가격</th>
           <th style="width:15%;">선물함</th>
         </tr>
       </thead>
