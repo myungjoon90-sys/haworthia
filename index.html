@@ -692,7 +692,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-secondary" onclick="loadBuyerInvoices()">🔄 새로고침</button>
         <button class="btn btn-blue" onclick="downloadAllBuyerPngs()" id="zipAllBtn">📦 전체 ZIP 다운로드</button>
       </div>
-      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px;margin-top:12px;">
+      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(630px,1fr));gap:12px;margin-top:12px;">
         <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">세션을 선택하세요</div>
       </div>
     </div>
@@ -941,6 +941,13 @@ const API = '';
 //  Nav
 // ══════════════════════════════════════════════════════════════════
 function showPage(id) {
+  const PROTECTED_TABS = ['members','catalog','consign'];
+  if (PROTECTED_TABS.includes(id) && !window._tabUnlocked) {
+    const pw = prompt('🔒 비밀번호를 입력하세요');
+    if (pw === null) return;                 // 취소
+    if (pw !== '2015') { toast('비밀번호가 올바르지 않습니다', 'err'); return; }
+    window._tabUnlocked = true;              // 한 번 입력하면 새로고침 전까지 유지
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
