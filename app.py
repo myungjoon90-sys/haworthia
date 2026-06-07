@@ -1220,7 +1220,7 @@ def consignment_excel():
 
     # ── 컬럼폭 ──
     from openpyxl.utils import get_column_letter
-    widths = [10, 8, 30, 12, 8, 12, 16, 14, 26, 18]
+    widths = [10, 8, 40, 12, 8, 12, 12, 11, 20, 15]
     for ci, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
     ws.row_dimensions[2].height = 40
