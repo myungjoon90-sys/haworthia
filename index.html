@@ -37,6 +37,8 @@
 }
 /* 송금 정산 시 가격(10번째 열): 금액 줄바꿈 금지 */
 .consign-card th:nth-child(10), .consign-card td:nth-child(10) { white-space: nowrap; }
+/* 합계 행: 글씨 키우고 높이 1.5배 */
+.consign-card tfoot td { font-size: 19px; padding: 14px 10px; }
 /* 위탁정산 페이지일 때 본문 폭 확장 */
 body.page-consign-active .container { max-width: 1500px; }
 
@@ -1759,7 +1761,7 @@ function renderConsignGroup(g, fmt) {
         </span>
       </div>
       <div class="tbl-wrap" style="background:#fff;">
-        <table style="background:#fff;color:#222;table-layout:auto;width:100%;">
+        <table style="background:#fff;color:#222;table-layout:fixed;width:auto;">
           <thead style="background:#f7f7f7;color:#222;">
             <tr>
               <th style="color:#222;text-align:center;width:60px;">정산<br>날짜</th>
