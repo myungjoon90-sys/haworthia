@@ -354,11 +354,12 @@ def parse_invoice_excel(ws):
         row = list(row)
 
         name = str(row[name_col] or '').strip() if name_col < len(row) else ''
+        # 금액: 빈칸/비숫자는 0으로 처리 (0원·무료·선물 상품도 명세서에 포함)
+        raw = str(row[amount_col] or '').replace(',', '').replace('원', '').strip() if amount_col < len(row) else ''
         try:
-            raw  = str(row[amount_col] or '').replace(',', '').replace('원', '')
-            amt  = int(float(raw))
+            amt = int(float(raw)) if raw != '' else 0
         except Exception:
-            continue
+            amt = 0
         item = str(row[item_col] or '').strip() if item_col >= 0 and item_col < len(row) else ''
         itemno = ''
         if itemno_col >= 0 and itemno_col < len(row):
@@ -376,7 +377,7 @@ def parse_invoice_excel(ws):
         clean = name.replace(' ', '').replace('\u00a0', '')
         if clean in {'총합계', '총계', '소계', '합계', '총합', '계', '총주문', '주문합계'}:
             continue
-        if name and amt > 0:
+        if name and (amt > 0 or item):
             orders.append({'name': name, 'item': item, 'item_no': itemno, 'amount': amt})
 
     return orders
