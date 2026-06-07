@@ -24,6 +24,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ── 한국시간(KST, UTC+9) 헬퍼: Railway 서버는 UTC라 표시/기록 시간이 9시간 어긋남 ──
+def now_kst():
+    """서버(UTC) 기준에서 한국시간 naive datetime 반환"""
+    return datetime.utcnow() + timedelta(hours=9)
+
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
@@ -63,7 +69,7 @@ def _log_every_request():
 # ══════════════════════════════════════════════════════════════════
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'ok': True, 'service': 'jiyang-haworthia', 'time': datetime.now().isoformat()})
+    return jsonify({'ok': True, 'service': 'jiyang-haworthia', 'time': now_kst().isoformat()})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -103,7 +109,7 @@ def receive_sms():
 
         body      = (data.get('body')   or data.get('message') or data.get('text')   or '').strip()
         sender    = (data.get('sender') or data.get('from')    or data.get('source') or '').strip()
-        recv_time = data.get('time') or datetime.now().isoformat()
+        recv_time = data.get('time') or now_kst().isoformat()
 
         if not body:
             logger.warning(f"⚠️  SMS 본문 없음 (data keys: {list(data.keys()) if data else 'none'})")
@@ -181,7 +187,7 @@ def upload_session():
             live_date = extracted
             live_date_source = 'filename'
         else:
-            live_date = datetime.now().strftime('%Y-%m-%d')
+            live_date = now_kst().strftime('%Y-%m-%d')
             live_date_source = 'today_fallback'
 
     try:
@@ -215,7 +221,7 @@ def upload_session():
     c = conn.execute(
         '''INSERT INTO live_sessions (filename, live_date, check_start, check_end, created_at)
            VALUES (?, ?, ?, ?, ?)''',
-        (file.filename, live_date, check_start, check_end, datetime.now().isoformat())
+        (file.filename, live_date, check_start, check_end, now_kst().isoformat())
     )
     session_id = c.lastrowid
 
@@ -487,7 +493,7 @@ def confirm_by_buyer():
     conn = get_conn()
     conn.execute(
         "UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='manual' WHERE session_id=? AND buyer_name=? AND status='pending'",
-        (datetime.now().isoformat(), session_id, buyer_name))
+        (now_kst().isoformat(), session_id, buyer_name))
     conn.commit()
     conn.close()
     logger.info(f"수동확인: {buyer_name} (session {session_id})")
@@ -499,7 +505,7 @@ def manual_confirm_order(order_id):
     """수동으로 입금확인 처리"""
     conn = get_conn()
     conn.execute('''UPDATE orders SET status='confirmed', confirmed_at=?, pay_type='manual'
-                   WHERE id=?''', (datetime.now().isoformat(), order_id))
+                   WHERE id=?''', (now_kst().isoformat(), order_id))
     conn.commit()
     conn.close()
     logger.info(f"수동 입금확인: order_id={order_id}")
@@ -602,7 +608,7 @@ def download_delivery_excel():
     wb.save(output)
     output.seek(0)
 
-    fname = f'입금확인_배송목록_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
+    fname = f'입금확인_배송목록_{now_kst().strftime("%Y%m%d_%H%M")}.xlsx'
     return send_file(output, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
@@ -697,7 +703,7 @@ def members_upload():
             existing = conn.execute('SELECT id FROM members WHERE name=?', (name,)).fetchone()
             conn.execute(
                 "INSERT OR REPLACE INTO members (name, phone, postal_code, address, message, updated_at) VALUES (?,?,?,?,?,?)",
-                (name, phone, post, addr, msg, datetime.now().isoformat())
+                (name, phone, post, addr, msg, now_kst().isoformat())
             )
             if existing: updated += 1
             else: added += 1
@@ -732,7 +738,7 @@ def members_download():
         ws.cell(row=ri, column=5, value=r['message'])
 
     output = BytesIO(); wb.save(output); output.seek(0)
-    fname = f'회원명단_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    fname = f'회원명단_{now_kst().strftime("%Y%m%d")}.xlsx'
     return send_file(output, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
@@ -763,7 +769,7 @@ def members_update(mid):
             if dup:
                 return jsonify({'error': f"이미 같은 이름의 회원이 있습니다: {fields['name']}"}), 400
         sets = ', '.join(f'{k}=?' for k in fields.keys()) + ', updated_at=?'
-        params = list(fields.values()) + [datetime.now().isoformat(), mid]
+        params = list(fields.values()) + [now_kst().isoformat(), mid]
         conn.execute(f'UPDATE members SET {sets} WHERE id=?', params)
         conn.commit()
         row = conn.execute('SELECT * FROM members WHERE id=?', (mid,)).fetchone()
@@ -827,7 +833,7 @@ def products_download():
         ws.cell(row=ri, column=5, value=r['remaining'])
 
     output = BytesIO(); wb.save(output); output.seek(0)
-    fname = f'판매품리스트_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    fname = f'판매품리스트_{now_kst().strftime("%Y%m%d")}.xlsx'
     return send_file(output, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
@@ -1227,7 +1233,7 @@ def consignment_excel():
 
     output = BytesIO()
     wb.save(output); output.seek(0)
-    fname = f'위탁정산_{consignor}_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    fname = f'위탁정산_{consignor}_{now_kst().strftime("%Y%m%d")}.xlsx'
     return send_file(output, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
@@ -1283,7 +1289,7 @@ def set_buyer_status():
         else:
             conn.execute(
                 "INSERT OR REPLACE INTO buyer_status (session_id, buyer_name, status, updated_at) VALUES (?,?,?,?)",
-                (sid, buyer, status, datetime.now().isoformat())
+                (sid, buyer, status, now_kst().isoformat())
             )
         conn.commit()
         logger.info(f"  📦 구매자 상태 변경: session={sid} '{buyer}' → {status}")
@@ -1311,7 +1317,7 @@ def export_buyer_status():
     w.writerow(['session_id', 'buyer_name', 'status', 'updated_at', 'live_date', 'filename'])
     for r in rows:
         w.writerow([r['session_id'], r['buyer_name'], r['status'], r['updated_at'], r['live_date'] or '', r['filename'] or ''])
-    fname = f'buyer_status_{datetime.now().strftime("%Y%m%d_%H%M")}.csv'
+    fname = f'buyer_status_{now_kst().strftime("%Y%m%d_%H%M")}.csv'
     return Response(buf.getvalue(),
                     mimetype='text/csv; charset=utf-8',
                     headers={'Content-Disposition': f'attachment; filename={fname}'})
@@ -1347,7 +1353,7 @@ def import_buyer_status():
             sid = (row.get('session_id') or '').strip()
             buyer = (row.get('buyer_name') or '').strip()
             status = (row.get('status') or '').strip()
-            updated = (row.get('updated_at') or datetime.now().isoformat()).strip()
+            updated = (row.get('updated_at') or now_kst().isoformat()).strip()
             if not sid or not buyer or status not in ('stored', 'shipped'):
                 skipped += 1; continue
             try:
@@ -1429,7 +1435,7 @@ def get_check_logs():
             'SELECT * FROM check_logs WHERE session_id=? AND check_date=? ORDER BY id DESC LIMIT 1',
             (session['id'], str(d))
         ).fetchone()
-        today = date.today()
+        today = now_kst().date()
         if d < today:
             day_status = 'done' if log else 'missed'
         elif d == today:
@@ -1535,7 +1541,7 @@ def approve_candidate(cand_id):
                 (target_session, target_buyer)).fetchall()
             if any_orders:
                 # 이미 입금확인된 구매자 — 후보만 닫고 매핑은 추가
-                now = datetime.now().isoformat()
+                now = now_kst().isoformat()
                 conn.execute("UPDATE match_candidates SET status='approved', decided_at=?, candidate_buyer_name=? WHERE id=?",
                              (now, target_buyer, cand_id))
                 paid_name = cand.get('paid_name')
@@ -1556,7 +1562,7 @@ def approve_candidate(cand_id):
                                 'message': f"'{target_buyer}' 는 이미 입금확인됨 — 후보 닫고 매핑 추가"})
             return jsonify({'error': f"세션{target_session} '{target_buyer}' 주문이 없음 (이미 삭제됐을 수 있음)"}), 404
         pay_type = 'card' if cand['source'] == 'imweb' else 'transfer'
-        now = datetime.now().isoformat()
+        now = now_kst().isoformat()
         for row in pending:
             conn.execute("UPDATE orders SET status='confirmed', confirmed_at=?, pay_type=?, bank_date=? WHERE id=?",
                          (now, pay_type, cand.get('paid_at'), row['id']))
@@ -1610,7 +1616,7 @@ def reject_candidate(cand_id):
             return jsonify({'error': '후보 없음'}), 404
         cand = dict(cand)
         conn.execute("UPDATE match_candidates SET status='rejected', decided_at=? WHERE id=?",
-                     (datetime.now().isoformat(), cand_id))
+                     (now_kst().isoformat(), cand_id))
         # ⭐ 닉네임 매핑 자동 추가 (동일인 아님) — 같은 pair 다시 후보로 만들지 않게
         paid_name  = cand.get('paid_name')
         buyer_name = cand.get('candidate_buyer_name')
@@ -1635,7 +1641,7 @@ def reject_candidate(cand_id):
 @app.route('/api/sms/echo', methods=['GET', 'POST'])
 def sms_echo():
     info = {
-        'ok': True, 'received_at': datetime.now().isoformat(),
+        'ok': True, 'received_at': now_kst().isoformat(),
         'method': request.method, 'path': request.path,
         'remote_addr': request.headers.get('X-Forwarded-For', request.remote_addr),
         'content_type': request.content_type,
@@ -1657,7 +1663,7 @@ def sms_simulate():
     if not body:
         return jsonify({'ok': False, 'error': 'body 필요'}), 400
     parsed = parse_sms(body)
-    recv_iso = datetime.now().isoformat()
+    recv_iso = now_kst().isoformat()
     sms_id = None
     try:
         conn = get_conn()
@@ -1753,7 +1759,7 @@ def upload_bank():
     matched_high = matched_cand = no_match = 0
     for d in deposits:
         try:
-            recv_iso = datetime.now().isoformat()
+            recv_iso = now_kst().isoformat()
             conn = get_conn()
             cur = conn.execute(
                 "INSERT INTO sms_payments (sender, body, parsed_name, parsed_amount, received_at) VALUES (?,?,?,?,?)",
@@ -1817,7 +1823,7 @@ def export_mappings():
         sep = '≠' if r['negative'] == 1 else '='
         lines.append(f"{r['nickname']}{sep}{r['realname']}")
     text = '\n'.join(lines) + '\n'
-    fname = f'nick_mappings_{datetime.now().strftime("%Y%m%d_%H%M")}.txt'
+    fname = f'nick_mappings_{now_kst().strftime("%Y%m%d_%H%M")}.txt'
     return Response(text,
                     mimetype='text/plain; charset=utf-8',
                     headers={'Content-Disposition': f'attachment; filename={fname}'})
@@ -2034,7 +2040,7 @@ def save_candidate(conn, session_id, source, source_ref,
             "created_at=? WHERE id=?",
             (paid_name, paid_name2, amount, paid_at,
              buyer_name, cand_amt, confidence, reason,
-             datetime.now().isoformat(), existing['id'])
+             now_kst().isoformat(), existing['id'])
         )
         logger.info(f"  🔄 의심후보 갱신: id={existing['id']} '{paid_name}' {amount:,}원 → '{buyer_name}' 합계{cand_amt} ({confidence})")
         return
@@ -2048,7 +2054,7 @@ def save_candidate(conn, session_id, source, source_ref,
             (session_id, source, src_ref_str,
              paid_name, paid_name2, amount, paid_at,
              first_id, buyer_name, cand_amt, confidence, reason,
-             datetime.now().isoformat()))
+             now_kst().isoformat()))
         logger.info(f"  🤔 의심후보: src={source} '{paid_name}' {amount:,}원 → '{buyer_name}' 합계{cand_amt} ({confidence}: {reason})")
     except Exception as e:
         if 'UNIQUE' not in str(e):
@@ -2062,7 +2068,7 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
     """
     name   = parsed.get('name')
     amount = parsed['amount']
-    now    = datetime.now().isoformat()
+    now    = now_kst().isoformat()
 
     conn = get_conn()
     try:
@@ -2132,9 +2138,9 @@ def match_sms_to_order(parsed, recv_time, sms_id=None):
 def run_auto_check():
     """15분마다 + 수동: 아임웹 카드결제 + 미매칭 SMS 재대조 (SUM 합산 + 의심후보)"""
     logger.info("자동 입금확인 시작...")
-    today    = datetime.now().strftime('%Y-%m-%d')
+    today    = now_kst().strftime('%Y-%m-%d')
     today_ym = today.replace('-', '')
-    now_time = datetime.now().strftime('%H:%M:%S')
+    now_time = now_kst().strftime('%H:%M:%S')
 
     conn = get_conn()
     try:
@@ -2168,7 +2174,7 @@ def run_auto_check():
                 live_dt = datetime.strptime(session['live_date'], '%Y-%m-%d')
                 start_dt = live_dt
                 end_dt = live_dt + timedelta(days=30)
-                if end_dt > datetime.now(): end_dt = datetime.now()
+                if end_dt > now_kst(): end_dt = now_kst()
                 start_ym = start_dt.strftime('%Y%m%d')
                 end_ym   = end_dt.strftime('%Y%m%d')
                 imweb_orders = get_paid_orders(start_ym, end_ym)
@@ -2257,7 +2263,7 @@ def _ensure_scheduler():
         # 첫 실행: 서버 기동 10초 뒤 즉시 1회 → 이후 15분마다
         sched.add_job(run_auto_check, 'interval', minutes=15,
                       id='interval_check', replace_existing=True,
-                      next_run_time=datetime.now() + timedelta(seconds=10))
+                      next_run_time=now_kst() + timedelta(seconds=10))
         sched.start()
         _SCHEDULER_STARTED = True
         logger.info("⏰ 스케줄러 시작 (10초 후 1회 + 15분마다)")
