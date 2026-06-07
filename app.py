@@ -965,11 +965,31 @@ def _consign_name(item_str):
     return str(item_str or '').strip()
 
 
+# 위탁자 코드 추출 — 상품명에서 '위탁' 바로 앞 코드(SSAC/IB/SW 등).
+#   예) '옵투사 실생(이계)-SSAC위탁' → SSAC
+#       '페일피스 -IB위탁품'        → IB
+#       '단정(오리지널)-IB위탁품'    → IB
+_CONSIGNOR_RE = _re_consign.compile(r'([0-9A-Za-z가-힣]+)\s*위탁')
+
+def _consignor_of(item_str):
+    """상품명에서 위탁자 코드를 추출. '위탁'은 있으나 코드 패턴이 없으면 '기타',
+    아예 위탁품이 아니면 None."""
+    if not item_str:
+        return None
+    s = str(item_str)
+    if '위탁' not in s:
+        return None
+    matches = _CONSIGNOR_RE.findall(s)
+    if matches:
+        return matches[-1].strip()   # 마지막 '위탁' 바로 앞 코드 사용
+    return '기타'
+
+
 @app.route('/api/consignment/list', methods=['GET'])
 def consignment_list():
-    """구매자별 위탁판매 정산 데이터.
+    """위탁자(코드)별 위탁판매 정산 데이터.
     · 상품명에 '위탁'이 들어간 모든 주문(상태 무관: 대기 포함)을 집계.
-    · 거래명세표 '구매자'(buyer_name) 기준으로 묶어 구매자마다 카드 1개.
+    · 상품명 끝의 위탁자 코드(-SSAC위탁 → SSAC, -IB위탁품 → IB)별로 묶어 코드마다 카드 1개.
     session_id 옵션. 각 row: order_id, item_name(원본 그대로), price, qty,
        is_3rd_party, sale_total, after_platform, after_remit
     """
@@ -983,16 +1003,16 @@ def consignment_list():
     if session_id:
         sql += " AND o.session_id=?"
         params.append(session_id)
-    sql += " ORDER BY o.buyer_name ASC, o.id ASC"
+    sql += " ORDER BY o.id ASC"
     rows = conn.execute(sql, params).fetchall()
     conn.close()
 
     grouped = {}
     seq = {}
     for r in rows:
-        if not _is_consign(r['item']):
+        cons = _consignor_of(r['item'])
+        if not cons:
             continue
-        buyer = (r['buyer_name'] or '(이름없음)').strip()
         name = _consign_name(r['item'])
         price = int(r['amount'] or 0)
         qty = 1
@@ -1003,21 +1023,22 @@ def consignment_list():
         after_platform = round(sale_total * third_factor * live_factor)
         after_remit = round(after_platform * 0.8)
 
-        if buyer not in grouped:
-            grouped[buyer] = {
-                'buyer': buyer,
+        if cons not in grouped:
+            grouped[cons] = {
+                'consignor': cons,
                 'live_date': r['live_date'],
                 'filename': r['filename'],
                 'rows': [],
                 'sum_sale': 0, 'sum_after_platform': 0, 'sum_after_remit': 0,
             }
-            seq[buyer] = 0
-        seq[buyer] += 1
-        grouped[buyer]['rows'].append({
-            'no': seq[buyer],
+            seq[cons] = 0
+        seq[cons] += 1
+        grouped[cons]['rows'].append({
+            'no': seq[cons],
             'order_id': r['id'],
             'item_name': name,
             'item_full': r['item'],
+            'buyer_name': (r['buyer_name'] or '').strip(),
             'price': price,
             'qty': qty,
             'sale_total': sale_total,
@@ -1028,12 +1049,12 @@ def consignment_list():
             'after_remit': after_remit,
             'live_date': r['live_date'],
         })
-        grouped[buyer]['sum_sale'] += sale_total
-        grouped[buyer]['sum_after_platform'] += after_platform
-        grouped[buyer]['sum_after_remit'] += after_remit
+        grouped[cons]['sum_sale'] += sale_total
+        grouped[cons]['sum_after_platform'] += after_platform
+        grouped[cons]['sum_after_remit'] += after_remit
 
-    # 정렬: 구매자 가나다순
-    return jsonify(sorted(grouped.values(), key=lambda x: x['buyer']))
+    # 정렬: 위탁자 코드 가나다/영문순
+    return jsonify(sorted(grouped.values(), key=lambda x: x['consignor']))
 
 
 @app.route('/api/orders/<int:order_id>/3rd-party', methods=['PUT'])
@@ -1052,19 +1073,20 @@ def set_3rd_party(order_id):
 
 @app.route('/api/consignment/excel', methods=['GET'])
 def consignment_excel():
-    """구매자 한 명의 위탁 정산표를 엑셀로 다운로드.
+    """위탁자(코드) 한 명의 위탁 정산표를 엑셀로 다운로드.
     · 상품명에 '위탁'이 들어간 모든 주문(상태 무관)을 집계.
-    · 제목 = '구매자 + 업로드 엑셀 파일명(확장자 제외)'
+    · 상품명 끝의 위탁자 코드(-SSAC위탁 → SSAC)별로 묶음.
+    · 제목 = '{정산날짜 M월 D일} {업로드 파일명(확장자 제외)} / 유튜브'
     · 정산날짜 = 해당 세션 날짜, 이름 = 거래명세표 원본 그대로.
     · 모든 폰트 맑은 고딕, 기존 대비 1pt 상향.
     layout: 정산날짜 | 번호 | 이름 | 가격 | 수량 | 판매가 합 | 타업체(10%) | 라방판매(20%)
             | 라방플랫폼수수료 제외 가격 | 송금 정산 시 가격 (20%제)
     """
-    # buyer(신규) 우선, 과거 호환을 위해 consignor 파라미터도 허용
-    buyer = (request.args.get('buyer') or request.args.get('consignor') or '').strip()
+    # consignor(신규) 우선, 과거 호환을 위해 buyer 파라미터도 허용
+    consignor = (request.args.get('consignor') or request.args.get('buyer') or '').strip()
     session_id = request.args.get('session_id')
-    if not buyer:
-        return jsonify({'error': 'buyer 필요'}), 400
+    if not consignor:
+        return jsonify({'error': 'consignor 필요'}), 400
 
     conn = get_conn()
     sql = ("SELECT o.id, o.buyer_name, o.item, o.amount, o.is_3rd_party, "
@@ -1081,13 +1103,14 @@ def consignment_excel():
 
     items = []        # (order_id, name, price, live_date, is_3rd_party)
     src_filename = '' # 제목에 쓸 업로드 파일명
+    title_date = ''   # 제목/정산날짜용 세션 날짜
     for r in rows:
-        if not _is_consign(r['item']):
-            continue
-        if (r['buyer_name'] or '').strip() != buyer:
+        if _consignor_of(r['item']) != consignor:
             continue
         if not src_filename:
             src_filename = r['filename'] or ''
+        if not title_date:
+            title_date = r['live_date'] or ''
         items.append((r['id'], _consign_name(r['item']), int(r['amount'] or 0),
                       r['live_date'], 1 if (r['is_3rd_party'] or 0) else 0))
 
@@ -1097,11 +1120,20 @@ def consignment_excel():
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = (buyer[:25] + ' 정산')
+    ws.title = (consignor[:25] + ' 정산')
 
-    # ── 제목: '구매자 + 업로드 파일명(확장자 제외)' ──
+    # ── 제목: '{M월 D일} {파일명(확장자 제외)} / 유튜브' ──
     fname_noext = os.path.splitext(src_filename)[0] if src_filename else ''
-    title_text = f"{buyer} {fname_noext}".strip()
+    try:
+        _d = datetime.strptime(title_date, '%Y-%m-%d')
+        date_kr = f"{_d.month}월 {_d.day}일"
+    except Exception:
+        date_kr = title_date or ''
+    title_text = " ".join(p for p in [date_kr, fname_noext] if p).strip()
+    if title_text:
+        title_text += " / 유튜브"
+    else:
+        title_text = "유튜브"
     tcell = ws.cell(row=1, column=1, value=title_text)
     tcell.font = Font(name=FONT, bold=True, size=SZ_TITLE)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
@@ -1194,7 +1226,7 @@ def consignment_excel():
 
     output = BytesIO()
     wb.save(output); output.seek(0)
-    fname = f'위탁정산_{buyer}_{datetime.now().strftime("%Y%m%d")}.xlsx'
+    fname = f'위탁정산_{consignor}_{datetime.now().strftime("%Y%m%d")}.xlsx'
     return send_file(output, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
