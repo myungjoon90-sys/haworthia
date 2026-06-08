@@ -753,14 +753,13 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     <div class="tbl-wrap">
       <table style="table-layout:auto;width:100%;">
         <thead><tr>
-          <th style="width:140px;">구매자</th>
-          <th style="width:110px;">라이브 날짜</th>
+          <th style="width:120px;">라이브 날짜</th>
           <th>상품명</th>
-          <th style="width:90px;text-align:right;">단가</th>
-          <th style="width:80px;">상태</th>
+          <th style="width:110px;text-align:right;">단가</th>
+          <th style="width:90px;">상태</th>
         </tr></thead>
         <tbody id="historyTbody">
-          <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</td></tr>
+          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</td></tr>
         </tbody>
       </table>
     </div>
@@ -832,6 +831,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-primary" onclick="submitCatalogUpload()" id="catalogUploadBtn">⬆ 판매품 업로드</button>
         <button class="btn btn-blue" onclick="downloadCatalog()">⬇ 판매품 다운로드 (전체)</button>
         <button class="btn btn-secondary" onclick="loadCatalog()">🔄 새로고침</button>
+        <button class="btn" style="background:#b91c1c;color:#fff;" onclick="cleanupCatalog()" title="50만원 이하·가격없음·중복 판매품 정리">🧹 중복/저가 정리</button>
       </div>
       <div id="catalogUploadResult" style="margin-top:8px;font-size:14px;color:var(--muted);"></div>
     </div>
@@ -1380,21 +1380,40 @@ async function loadHistory() {
 function _renderHistory(rows) {
   const tb = document.getElementById('historyTbody');
   document.getElementById('history-count').textContent = `(${rows.length}건)`;
-  const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
-  document.getElementById('history-total').textContent = total.toLocaleString() + '원';
-  if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">내역 없음</td></tr>'; return; }
+  const grandTotal = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+  document.getElementById('history-total').textContent = grandTotal.toLocaleString() + '원';
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px;">내역 없음</td></tr>'; return; }
+  // 구매자별 그룹 (백엔드가 구매자→날짜 순으로 정렬해서 보냄)
+  const groups = []; const idx = {};
+  for (const r of rows) {
+    const b = (r.buyer_name || '(이름없음)');
+    if (!(b in idx)) { idx[b] = groups.length; groups.push({buyer:b, items:[], sum:0}); }
+    const g = groups[idx[b]]; g.items.push(r); g.sum += Number(r.amount || 0);
+  }
   const statusKr = {confirmed:'입금확인', pending:'대기'};
-  const cap = 1000;
-  const show = rows.slice(0, cap);
-  let html = show.map(r => `
-      <tr>
-        <td><strong>${_esc(r.buyer_name||'')}</strong></td>
+  const cap = 2000;
+  let html = '', rendered = 0, cut = false;
+  for (const g of groups) {
+    if (rendered >= cap) { cut = true; break; }
+    html += `<tr><td colspan="4" style="background:#1f2a37;color:#fff;font-weight:700;padding:9px 12px;border-top:3px solid var(--green);">👤 ${_esc(g.buyer)} <span style="color:#9aa7b4;font-weight:400;font-size:12px;">· ${g.items.length}건</span></td></tr>`;
+    for (const r of g.items) {
+      html += `<tr>
         <td style="color:var(--muted);white-space:nowrap;">${_esc(r.live_date||'')}</td>
         <td>${_esc(r.item||'')}</td>
         <td style="text-align:right;font-family:'DM Mono',monospace;">${Number(r.amount||0).toLocaleString()}</td>
         <td><span style="color:${r.status==='confirmed'?'var(--green)':'var(--muted)'};">${statusKr[r.status]||r.status||''}</span></td>
-      </tr>`).join('');
-  if (rows.length > cap) html += `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:10px;">… 외 ${rows.length-cap}건 (검색으로 좁혀보세요)</td></tr>`;
+      </tr>`;
+      rendered++;
+    }
+    html += `<tr style="background:var(--surface2);font-weight:700;">
+        <td style="text-align:right;color:var(--text);">합계</td>
+        <td></td>
+        <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--green);">${g.sum.toLocaleString()}원</td>
+        <td></td>
+      </tr>`;
+    html += `<tr><td colspan="4" style="padding:0;border-bottom:3px solid var(--border);"></td></tr>`;
+  }
+  if (cut) html += `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:10px;">… 양이 많아 일부만 표시했습니다. 닉네임/상품명으로 검색해 좁혀보세요.</td></tr>`;
   tb.innerHTML = html;
 }
 function filterHistory() {
@@ -2185,6 +2204,15 @@ async function loadCatalog() {
     }
     _renderCatalogFiltered(_catalogAll);
   } catch(e) { toast('판매품 리스트 불러오기 실패', 'err'); }
+}
+async function cleanupCatalog() {
+  if (!confirm('50만원 이하·가격없음 판매품과 중복(같은 이름)을 정리(삭제)합니다.\n계속할까요?')) return;
+  try {
+    const r = await fetch(API + '/api/products/cleanup', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) { toast(`🧹 저가 ${d.removed_low}건 + 중복 ${d.removed_dup}건 삭제 (남은 ${d.remaining}건)`, 'ok'); loadCatalog(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
 }
 let _catalogTimer = null;
 function filterCatalog() {
