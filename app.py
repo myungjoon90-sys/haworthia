@@ -377,6 +377,9 @@ def parse_invoice_excel(ws):
         clean = name.replace(' ', '').replace('\u00a0', '')
         if clean in {'총합계', '총계', '소계', '합계', '총합', '계', '총주문', '주문합계'}:
             continue
+        # 구매자가 아닌 메모/상태 행 제외 (예: '문자발송', '입금 x')
+        if any(k in clean for k in ('문자발송', '입금x', '입금X', '문자전송')):
+            continue
         if name and (amt > 0 or item):
             orders.append({'name': name, 'item': item, 'item_no': itemno, 'amount': amt})
 
@@ -444,7 +447,10 @@ def get_pending_orders():
                     ls.live_date, ls.filename, o.session_id
              FROM orders o
              JOIN live_sessions ls ON o.session_id = ls.id
-             WHERE o.status = 'pending' '''
+             WHERE o.status = 'pending'
+               AND o.buyer_name NOT LIKE '%문자발송%'
+               AND o.buyer_name NOT LIKE '%입금x%'
+               AND o.buyer_name NOT LIKE '%입금 x%' '''
     params = []
     if session_id:
         sql += ' AND o.session_id = ?'
@@ -522,6 +528,37 @@ def manual_unconfirm_order(order_id):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+
+@app.route('/api/orders/by-buyer', methods=['DELETE'])
+def delete_orders_by_buyer():
+    """한 구매자의 (해당 세션) 주문 전체 삭제"""
+    session_id = request.args.get('session_id')
+    buyer = request.args.get('buyer_name')
+    if not session_id or not buyer:
+        return jsonify({'error': '필수 파라미터 없음'}), 400
+    conn = get_conn()
+    n = conn.execute("DELETE FROM orders WHERE session_id=? AND buyer_name=?", (session_id, buyer)).rowcount
+    conn.commit(); conn.close()
+    logger.info(f"🗑 주문 삭제: {buyer} (session {session_id}) {n}건")
+    return jsonify({'ok': True, 'deleted': n})
+
+
+@app.route('/api/purchase-history', methods=['GET'])
+def purchase_history():
+    """전체 구매 이력 (구매자/상품/단가/날짜). 닉네임·상품명 검색은 프론트에서 필터."""
+    conn = get_conn()
+    rows = conn.execute('''
+        SELECT o.buyer_name, o.item, o.item_no, o.amount, o.status,
+               ls.live_date, ls.filename
+        FROM orders o LEFT JOIN live_sessions ls ON o.session_id = ls.id
+        WHERE o.buyer_name NOT LIKE '%문자발송%'
+          AND o.buyer_name NOT LIKE '%입금x%'
+          AND o.buyer_name NOT LIKE '%입금 x%'
+        ORDER BY o.buyer_name COLLATE NOCASE ASC, ls.live_date DESC, o.id ASC
+    ''').fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route('/api/delivery/excel', methods=['GET'])
