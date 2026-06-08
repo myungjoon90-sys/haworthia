@@ -234,18 +234,19 @@ def upload_session():
 
     # 판매품 리스트 백업 — 같은 세션 중복 방지
     try:
-        existing_names = set(r[0] for r in conn.execute("SELECT DISTINCT item_name FROM product_catalog").fetchall())
+        existing_pairs = set((r[0], r[1]) for r in conn.execute("SELECT item_name, price FROM product_catalog").fetchall())
         for p in catalog_items:
             nm = (p.get('item_name') or '').strip()
-            if not _catalog_keep(p.get('price')):   # 50만원 이하/가격없음 제외
+            if not nm:
                 continue
-            if nm in existing_names:                 # 같은 이름 중복 제외
+            pr = p.get('price')
+            if (nm, pr) in existing_pairs:           # 이름+가격이 모두 같은 중복만 제외
                 continue
-            existing_names.add(nm)
+            existing_pairs.add((nm, pr))
             conn.execute(
                 '''INSERT INTO product_catalog (session_id, live_date, item_no, item_name, price, remaining)
                    VALUES (?, ?, ?, ?, ?, ?)''',
-                (session_id, live_date, p.get('item_no',''), nm, p.get('price'), p.get('remaining',''))
+                (session_id, live_date, p.get('item_no',''), nm, pr, p.get('remaining',''))
             )
         if catalog_items:
             logger.info(f"  📚 판매품 카탈로그 저장: {len(catalog_items)}건 (session={session_id})")
@@ -267,15 +268,6 @@ def upload_session():
         'check_start': check_start,
         'check_end': check_end
     })
-
-
-# 판매품 카탈로그 저장 기준: 이 가격 이하(또는 가격없음)는 저장 안 함 (렉 방지)
-CATALOG_MIN_PRICE = 500000
-def _catalog_keep(price):
-    try:
-        return price is not None and int(price) > CATALOG_MIN_PRICE
-    except Exception:
-        return False
 
 
 def parse_product_catalog(ws):
@@ -921,21 +913,17 @@ def products_update(pid):
 
 @app.route('/api/products/cleanup', methods=['POST'])
 def products_cleanup():
-    """50만원 이하(또는 가격없음) 판매품 삭제 + 같은 이름 중복 제거(이름당 최신 1건만 유지)."""
+    """이름과 가격이 모두 같은 중복만 제거 (그룹당 최신 1건만 유지). 가격 기준 삭제 없음."""
     conn = get_conn()
     try:
-        removed_low = conn.execute(
-            "DELETE FROM product_catalog WHERE price IS NULL OR price <= ?",
-            (CATALOG_MIN_PRICE,)
-        ).rowcount
         removed_dup = conn.execute(
             "DELETE FROM product_catalog WHERE id NOT IN "
-            "(SELECT MAX(id) FROM product_catalog GROUP BY item_name)"
+            "(SELECT MAX(id) FROM product_catalog GROUP BY item_name, price)"
         ).rowcount
         conn.commit()
         remaining = conn.execute("SELECT COUNT(*) AS c FROM product_catalog").fetchone()['c']
-        logger.info(f"🧹 판매품 정리: 저가 {removed_low} + 중복 {removed_dup} 삭제, 남은 {remaining}")
-        return jsonify({'ok': True, 'removed_low': removed_low, 'removed_dup': removed_dup, 'remaining': remaining})
+        logger.info(f"🧹 판매품 중복정리: {removed_dup}건 삭제, 남은 {remaining}")
+        return jsonify({'ok': True, 'removed_dup': removed_dup, 'remaining': remaining})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -991,7 +979,7 @@ def products_upload():
     conn = get_conn()
     try:
         conn.execute("DELETE FROM product_catalog WHERE session_id IS NULL OR session_id=0")
-        seen = set(r[0] for r in conn.execute("SELECT DISTINCT item_name FROM product_catalog").fetchall())
+        seen = set((r[0], r[1]) for r in conn.execute("SELECT item_name, price FROM product_catalog").fetchall())
         for row in rows_raw[header_idx+1:]:
             if not row: continue
             row = list(row)
@@ -1014,11 +1002,11 @@ def products_upload():
             item_name = str(nm_v or '').strip()
             remaining = str(rm_v).strip() if rm_v is not None and str(rm_v).strip() else ''
             live_date = str(dt_v).strip() if dt_v else ''
-            if not _catalog_keep(price):   # 50만원 이하/가격없음 제외
+            if not item_name:
                 continue
-            if item_name in seen:          # 같은 이름 중복 제외
+            if (item_name, price) in seen:   # 이름+가격이 모두 같은 중복만 제외
                 continue
-            seen.add(item_name)
+            seen.add((item_name, price))
             conn.execute(
                 "INSERT INTO product_catalog (session_id, live_date, item_no, item_name, price, remaining) VALUES (?,?,?,?,?,?)",
                 (0, live_date, item_no, item_name, price, remaining)
