@@ -1073,7 +1073,7 @@ def consignment_list():
     """
     session_id = request.args.get('session_id')
     conn = get_conn()
-    sql = ("SELECT o.id, o.buyer_name, o.item, o.amount, o.session_id, o.is_3rd_party, "
+    sql = ("SELECT o.id, o.buyer_name, o.item, o.amount, o.session_id, o.is_3rd_party, o.status, "
            "       ls.live_date, ls.filename "
            "FROM orders o LEFT JOIN live_sessions ls ON o.session_id=ls.id "
            "WHERE 1=1")
@@ -1117,6 +1117,7 @@ def consignment_list():
             'item_name': name,
             'item_full': r['item'],
             'buyer_name': (r['buyer_name'] or '').strip(),
+            'status': r['status'],
             'price': price,
             'qty': qty,
             'sale_total': sale_total,
