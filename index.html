@@ -36,12 +36,13 @@
   width: 240px; white-space: normal; word-break: break-all;
 }
 /* 송금 정산 시 가격(10번째 열): 금액 줄바꿈 금지 */
-.consign-card th:nth-child(10), .consign-card td:nth-child(10) { white-space: nowrap; }
+.consign-card th:nth-child(12), .consign-card td:nth-child(12) { white-space: nowrap; }
 /* 합계 행: 글씨 키우고 높이 1.5배 */
 .consign-card tfoot td { font-size: 19px; padding: 14px 10px; }
 .consign-card { width: fit-content; max-width: 100%; }
 /* 위탁정산 페이지일 때 본문 폭 확장 */
 body.page-consign-active .container { max-width: 1500px; }
+body.page-invoice-active .container { max-width: 1280px; }
 
 :root {
   --bg: #0d1117; --surface: #161b22; --surface2: #1c2330;
@@ -703,7 +704,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-secondary" onclick="loadBuyerInvoices()">🔄 새로고침</button>
         <button class="btn btn-blue" onclick="downloadAllBuyerPngs()" id="zipAllBtn">📦 전체 ZIP 다운로드</button>
       </div>
-      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(454px,1fr));gap:12px;margin-top:12px;">
+      <div id="buyerInvoiceContainer" style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:12px;margin-top:12px;">
         <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">세션을 선택하세요</div>
       </div>
     </div>
@@ -750,18 +751,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     </div>
     <p style="font-size:13px;color:var(--muted);margin:0 16px 6px;">💡 구매자 닉네임 또는 상품명으로 검색하세요. 지금까지의 모든 구매 내역(상품·단가 포함)입니다.</p>
     <div style="padding:0 16px 12px;font-size:14px;">합계: <strong id="history-total" style="color:var(--green);font-family:'DM Mono',monospace;">0원</strong></div>
-    <div class="tbl-wrap">
-      <table style="table-layout:auto;width:100%;">
-        <thead><tr>
-          <th style="width:120px;">라이브 날짜</th>
-          <th>상품명</th>
-          <th style="width:110px;text-align:right;">단가</th>
-          <th style="width:90px;">상태</th>
-        </tr></thead>
-        <tbody id="historyTbody">
-          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</td></tr>
-        </tbody>
-      </table>
+    <div id="historyContainer" style="padding:0 4px 8px;">
+      <div style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</div>
     </div>
   </div>
 </div>
@@ -992,6 +983,7 @@ function showPage(id) {
 
   // 위탁정산 페이지는 표가 넓어 가로스크롤이 없도록 본문 폭을 확장
   document.body.classList.toggle('page-consign-active', id === 'consign');
+  document.body.classList.toggle('page-invoice-active', id === 'invoice');
 
   if (id === 'invoice')  { loadBuyerInvoiceSessions(); }
   if (id === 'auto')     { loadAutoPage(); loadAutoSessionFilter(); }
@@ -1369,8 +1361,8 @@ async function deleteConfirmedBuyer(sid, buyer) {
 let _historyAll = [];
 let _historyTimer = null;
 async function loadHistory() {
-  const tb = document.getElementById('historyTbody');
-  if (tb) tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</td></tr>';
+  const box = document.getElementById('historyContainer');
+  if (box) box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</div>';
   try {
     const r = await fetch(API + '/api/purchase-history');
     _historyAll = await r.json();
@@ -1378,11 +1370,11 @@ async function loadHistory() {
   } catch(e) { toast('구매 이력 불러오기 실패', 'err'); }
 }
 function _renderHistory(rows) {
-  const tb = document.getElementById('historyTbody');
+  const box = document.getElementById('historyContainer');
   document.getElementById('history-count').textContent = `(${rows.length}건)`;
   const grandTotal = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
   document.getElementById('history-total').textContent = grandTotal.toLocaleString() + '원';
-  if (!rows.length) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px;">내역 없음</td></tr>'; return; }
+  if (!rows.length) { box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px;">내역 없음</div>'; return; }
   // 구매자별 그룹 (백엔드가 구매자→날짜 순으로 정렬해서 보냄)
   const groups = []; const idx = {};
   for (const r of rows) {
@@ -1395,26 +1387,27 @@ function _renderHistory(rows) {
   let html = '', rendered = 0, cut = false;
   for (const g of groups) {
     if (rendered >= cap) { cut = true; break; }
-    html += `<tr><td colspan="4" style="background:#1f2a37;color:#fff;font-weight:700;padding:9px 12px;border-top:3px solid var(--green);">👤 ${_esc(g.buyer)} <span style="color:#9aa7b4;font-weight:400;font-size:12px;">· ${g.items.length}건</span></td></tr>`;
-    for (const r of g.items) {
-      html += `<tr>
-        <td style="color:var(--muted);white-space:nowrap;">${_esc(r.live_date||'')}</td>
-        <td>${_esc(r.item||'')}</td>
-        <td style="text-align:right;font-family:'DM Mono',monospace;">${Number(r.amount||0).toLocaleString()}</td>
-        <td><span style="color:${r.status==='confirmed'?'var(--green)':'var(--muted)'};">${statusKr[r.status]||r.status||''}</span></td>
-      </tr>`;
-      rendered++;
-    }
-    html += `<tr style="background:var(--surface2);font-weight:700;">
-        <td style="text-align:right;color:var(--text);">합계</td>
-        <td></td>
-        <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--green);">${g.sum.toLocaleString()}원</td>
-        <td></td>
-      </tr>`;
-    html += `<tr><td colspan="4" style="padding:0;border-bottom:3px solid var(--border);"></td></tr>`;
+    const itemRows = g.items.map(r => `
+          <tr style="border-top:1px solid var(--border);">
+            <td style="padding:7px 12px;color:var(--muted);white-space:nowrap;width:120px;">${_esc(r.live_date||'')}</td>
+            <td style="padding:7px 12px;">${_esc(r.item||'')}</td>
+            <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;width:120px;">${Number(r.amount||0).toLocaleString()}</td>
+            <td style="padding:7px 12px;text-align:right;width:90px;color:${r.status==='confirmed'?'var(--green)':'var(--muted)'};">${statusKr[r.status]||r.status||''}</td>
+          </tr>`).join('');
+    rendered += g.items.length;
+    html += `
+      <div style="border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden;background:var(--surface);">
+        <div style="display:flex;justify-content:space-between;align-items:center;background:#1f2a37;color:#fff;padding:11px 14px;">
+          <span style="font-weight:700;font-size:15px;">👤 ${_esc(g.buyer)} <span style="color:#9aa7b4;font-weight:400;font-size:12px;">· ${g.items.length}건</span></span>
+          <span style="font-weight:700;color:#7ee2a8;">합계 ${g.sum.toLocaleString()}원</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <tbody>${itemRows}</tbody>
+        </table>
+      </div>`;
   }
-  if (cut) html += `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:10px;">… 양이 많아 일부만 표시했습니다. 닉네임/상품명으로 검색해 좁혀보세요.</td></tr>`;
-  tb.innerHTML = html;
+  if (cut) html += `<div style="text-align:center;color:var(--muted);padding:10px;">… 양이 많아 일부만 표시했습니다. 닉네임/상품명으로 검색해 좁혀보세요.</div>`;
+  box.innerHTML = html;
 }
 function filterHistory() {
   clearTimeout(_historyTimer);
@@ -1857,6 +1850,8 @@ function renderConsignGroup(g, fmt) {
         <td style="text-align:center;background:#fff;color:#222;">${dt}</td>
         <td style="text-align:center;background:#fff;color:#222;">${r.no}</td>
         <td style="background:#fff;color:#222;text-align:left;">${r.item_name||''}</td>
+        <td style="background:#fff;color:#222;text-align:left;">${_esc(r.buyer_name||'')}</td>
+        <td style="background:#fff;text-align:center;">${r.status==='confirmed' ? '<span style="color:#16a34a;font-weight:700;">✅ 입금</span>' : '<span style="color:#c0392b;">⏳ 대기</span>'}</td>
         <td style="text-align:right;background:#fff;color:#222;">${fmt(r.price)}</td>
         <td style="text-align:center;background:#fff;color:#222;">${r.qty}</td>
         <td style="text-align:right;background:#fff;color:#222;">${fmt(r.sale_total)}</td>
@@ -1888,6 +1883,8 @@ function renderConsignGroup(g, fmt) {
               <th style="color:#222;text-align:center;width:60px;">정산<br>날짜</th>
               <th style="color:#222;text-align:center;width:50px;">번호</th>
               <th style="color:#222;text-align:center;">이름</th>
+              <th style="color:#222;text-align:center;width:90px;">구매자</th>
+              <th style="color:#222;text-align:center;width:64px;">입금<br>여부</th>
               <th style="color:#222;text-align:center;width:70px;">가격</th>
               <th style="color:#222;text-align:center;width:60px;">수량</th>
               <th style="color:#222;text-align:center;width:70px;">판매가 합</th>
@@ -1900,7 +1897,7 @@ function renderConsignGroup(g, fmt) {
           <tbody data-consignor="${_esc(consignor)}">${rowsHtml}</tbody>
           <tfoot>
             <tr style="background:#FFFF66;color:#222;font-weight:700;">
-              <td colspan="8" style="text-align:right;color:#222;">합계</td>
+              <td colspan="10" style="text-align:right;color:#222;">합계</td>
               <td style="text-align:right;color:#222;font-family:'맑은 고딕','Malgun Gothic',sans-serif;white-space:nowrap;" data-sum-platform>${fmt(g.sum_after_platform)}</td>
               <td style="text-align:right;color:#222;font-family:'맑은 고딕','Malgun Gothic',sans-serif;white-space:nowrap;" data-sum-remit>${fmt(g.sum_after_remit)}</td>
             </tr>
