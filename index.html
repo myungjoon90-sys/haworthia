@@ -747,7 +747,10 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="card" style="margin-bottom:16px;">
     <div class="card-head">
       <h3>🧾 구매 이력 <span id="history-count" style="color:var(--muted);font-size:14px;">(0건)</span></h3>
-      <input type="text" id="historySearch" oninput="filterHistory()" placeholder="🔍 닉네임/상품명 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:260px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="historySearch" oninput="filterHistory()" placeholder="🔍 닉네임/상품명 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:260px;">
+        <button class="btn btn-primary" id="imwebImportBtn" onclick="imwebImport()" title="아임웹 쇼핑 주문 중 20만원 이상을 구매이력에 추가">📥 아임웹 20만↑ 가져오기</button>
+      </div>
     </div>
     <p style="font-size:13px;color:var(--muted);margin:0 16px 6px;">💡 구매자 닉네임 또는 상품명으로 검색하세요. 지금까지의 모든 구매 내역(상품·단가 포함)입니다.</p>
     <div style="padding:0 16px 12px;font-size:14px;">합계: <strong id="history-total" style="color:var(--green);font-family:'DM Mono',monospace;">0원</strong></div>
@@ -1360,6 +1363,19 @@ async function deleteConfirmedBuyer(sid, buyer) {
 // 🧾 구매 이력 (닉네임/상품명 검색, 총 합계)
 let _historyAll = [];
 let _historyTimer = null;
+async function imwebImport() {
+  if (!confirm('아임웹 쇼핑 주문에서 20만원 이상 주문을 가져와 구매이력에 추가합니다.\n주문이 많으면 수십 초 걸릴 수 있어요. 계속할까요?')) return;
+  const btn = document.getElementById('imwebImportBtn');
+  const o = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 가져오는 중...'; }
+  try {
+    const r = await fetch(API + '/api/imweb/import', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({min_amount:200000})});
+    const d = await r.json();
+    if (d.ok) { toast(`📥 아임웹 신규 ${d.added}건 추가 (조회 ${d.fetched}, 누적 ${d.total})`, 'ok'); loadHistory(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패(아임웹 조회 지연일 수 있음)', 'err'); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = o; } }
+}
 async function loadHistory() {
   const box = document.getElementById('historyContainer');
   if (box) box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</div>';
@@ -1389,7 +1405,7 @@ function _renderHistory(rows) {
     if (rendered >= cap) { cut = true; break; }
     const itemRows = g.items.map(r => `
           <tr style="border-top:1px solid var(--border);">
-            <td style="padding:7px 12px;color:var(--muted);white-space:nowrap;width:120px;">${_esc(r.live_date||'')}</td>
+            <td style="padding:7px 12px;color:var(--muted);white-space:nowrap;width:140px;">${_esc(r.live_date||'')}${r.source==='아임웹' ? ' <span style="background:#2563eb;color:#fff;border-radius:3px;padding:0 5px;font-size:11px;">아임웹</span>' : ''}</td>
             <td style="padding:7px 12px;">${_esc(r.item||'')}</td>
             <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;width:120px;">${Number(r.amount||0).toLocaleString()}</td>
             <td style="padding:7px 12px;text-align:right;width:90px;color:${r.status==='confirmed'?'var(--green)':'var(--muted)'};">${statusKr[r.status]||r.status||''}</td>
@@ -2649,6 +2665,17 @@ async function setBuyerStatus(sessionId, buyer, status) {
   }
 }
 
+async function _captureInvoice(el) {
+  // 2열 그리드/축소 영향 없이 고정 폭(760px)으로 깔끔하게 캡처
+  const prevW = el.style.width, prevMaxW = el.style.maxWidth, prevMinW = el.style.minWidth;
+  el.style.width = '760px'; el.style.maxWidth = 'none'; el.style.minWidth = '760px';
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  try {
+    return await html2canvas(el, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+  } finally {
+    el.style.width = prevW; el.style.maxWidth = prevMaxW; el.style.minWidth = prevMinW;
+  }
+}
 async function downloadBuyerPng(renderId, buyerName) {
   const el = document.getElementById(renderId);
   if (!el || typeof html2canvas !== 'function') {
@@ -2656,7 +2683,7 @@ async function downloadBuyerPng(renderId, buyerName) {
     return;
   }
   try {
-    const canvas = await html2canvas(el, {backgroundColor:'#ffffff', scale: 2, useCORS:true, width: el.scrollWidth, height: el.scrollHeight, windowWidth: el.scrollWidth, windowHeight: el.scrollHeight, scrollX:0, scrollY:0});
+    const canvas = await _captureInvoice(el);
     const dataUrl = canvas.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = dataUrl;
@@ -2687,7 +2714,7 @@ async function downloadAllBuyerPngs() {
     for (const r of renders) {
       const name = r.closest('.invoice-card').querySelector('.name').textContent;
       btn.innerHTML = `<span class="spinner"></span> ${++done}/${renders.length}...`;
-      const canvas = await html2canvas(r, {backgroundColor:'#ffffff', scale: 2, useCORS:true, width: r.scrollWidth, height: r.scrollHeight, windowWidth: r.scrollWidth, windowHeight: r.scrollHeight, scrollX:0, scrollY:0});
+      const canvas = await _captureInvoice(r);
       const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
       const safe = name.replace(/[\\/:*?"<>|]/g, '_');
       zip.file(`${safe}_거래명세서.png`, blob);

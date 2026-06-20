@@ -552,21 +552,123 @@ def delete_orders_by_buyer():
     return jsonify({'ok': True, 'deleted': n})
 
 
+def _ensure_imweb_table(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS imweb_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_no TEXT UNIQUE,
+        buyer_name TEXT,
+        item TEXT,
+        amount INTEGER,
+        order_date TEXT,
+        status TEXT DEFAULT 'confirmed',
+        created_at TEXT
+    )''')
+
+
 @app.route('/api/purchase-history', methods=['GET'])
 def purchase_history():
-    """전체 구매 이력 (구매자/상품/단가/날짜). 닉네임·상품명 검색은 프론트에서 필터."""
+    """전체 구매 이력 = 거래명세서(orders) + 아임웹 가져오기(imweb_history) 합본.
+    닉네임·상품명 검색은 프론트에서 필터."""
     conn = get_conn()
-    rows = conn.execute('''
-        SELECT o.buyer_name, o.item, o.item_no, o.amount, o.status,
-               ls.live_date, ls.filename
+    _ensure_imweb_table(conn)
+    orders = conn.execute('''
+        SELECT o.buyer_name, o.item, o.item_no, o.amount, o.status, ls.live_date
         FROM orders o LEFT JOIN live_sessions ls ON o.session_id = ls.id
         WHERE o.buyer_name NOT LIKE '%문자발송%'
           AND o.buyer_name NOT LIKE '%입금x%'
           AND o.buyer_name NOT LIKE '%입금 x%'
-        ORDER BY o.buyer_name COLLATE NOCASE ASC, ls.live_date DESC, o.id ASC
     ''').fetchall()
+    imweb = conn.execute(
+        "SELECT buyer_name, item, amount, status, order_date FROM imweb_history "
+        "WHERE buyer_name NOT LIKE '%문자발송%'"
+    ).fetchall()
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    out = []
+    for r in orders:
+        out.append({'buyer_name': r['buyer_name'], 'item': r['item'], 'item_no': r['item_no'],
+                    'amount': r['amount'], 'status': r['status'], 'live_date': r['live_date'], 'source': '거래명세서'})
+    for r in imweb:
+        out.append({'buyer_name': r['buyer_name'], 'item': r['item'], 'item_no': '',
+                    'amount': r['amount'], 'status': r['status'], 'live_date': r['order_date'], 'source': '아임웹'})
+    # 구매자 가나다 ASC, 같은 구매자 안에서 날짜 DESC (stable sort 활용)
+    out.sort(key=lambda x: (x['live_date'] or ''), reverse=True)
+    out.sort(key=lambda x: (x['buyer_name'] or '').lower())
+    return jsonify(out)
+
+
+@app.route('/api/imweb/import', methods=['POST'])
+def imweb_import():
+    """아임웹 쇼핑 주문 중 지정 금액(기본 20만원) 이상을 가져와 구매이력(imweb_history)에 저장.
+    · 닉네임 매핑(실명→닉)으로 이름을 통일해 같은 사람은 한 명으로 합침.
+    · order_no 기준 중복 방지(INSERT OR IGNORE). 기간은 30일 단위로 나눠 조회."""
+    data = request.get_json(silent=True) or {}
+    try:
+        min_amount = int(data.get('min_amount') or 200000)
+    except Exception:
+        min_amount = 200000
+    today = now_kst()
+    to_s = str(data.get('to') or today.strftime('%Y%m%d'))
+    from_s = str(data.get('from') or '20240101')
+    try:
+        d0 = datetime.strptime(from_s, '%Y%m%d'); d1 = datetime.strptime(to_s, '%Y%m%d')
+    except Exception:
+        return jsonify({'error': '날짜 형식 오류(YYYYMMDD)'}), 400
+
+    conn = get_conn()
+    _ensure_imweb_table(conn)
+    real2nick = {}
+    for n in conn.execute("SELECT nickname, realname FROM nick_mappings WHERE COALESCE(negative,0)=0").fetchall():
+        if n['nickname'] and n['realname']:
+            real2nick[(n['realname'] or '').strip()] = (n['nickname'] or '').strip()
+
+    def canon(name, name2):
+        for cand in (name2, name):           # 실명(괄호 앞) 우선 매핑 → 닉으로 통일
+            c = (cand or '').strip()
+            if c and c in real2nick:
+                return real2nick[c]
+        return (name or name2 or '').strip()
+
+    fetched = added = 0
+    seen = set()
+    cur = d0
+    while cur <= d1:
+        chunk_end = min(cur + timedelta(days=29), d1)
+        try:
+            orders = get_paid_orders(cur.strftime('%Y%m%d'), chunk_end.strftime('%Y%m%d'))
+        except Exception as e:
+            logger.warning(f"아임웹 조회 실패 {cur.date()}~{chunk_end.date()}: {e}")
+            orders = []
+        for io in orders:
+            fetched += 1
+            try:
+                info = extract_order_info(io)
+            except Exception:
+                continue
+            amt = int(info.get('amount') or 0)
+            if amt < min_amount:
+                continue
+            ono = str(io.get('order_no') or io.get('orderNo') or '').strip()
+            dedup_key = ono or (info.get('name','') + '|' + info.get('item','') + '|' + str(amt) + '|' + str(info.get('paid_at',''))[:10])
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            buyer = canon(info.get('name'), info.get('name2'))
+            odate = str(info.get('paid_at') or '')[:10]
+            try:
+                r = conn.execute(
+                    "INSERT OR IGNORE INTO imweb_history (order_no, buyer_name, item, amount, order_date, status, created_at) "
+                    "VALUES (?,?,?,?,?, 'confirmed', ?)",
+                    (ono or None, buyer, info.get('item',''), amt, odate, now_kst().isoformat()))
+                added += r.rowcount
+            except Exception as e:
+                logger.warning(f"imweb_history 저장 실패: {e}")
+        cur = chunk_end + timedelta(days=1)
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) AS c FROM imweb_history").fetchone()['c']
+    conn.close()
+    logger.info(f"📥 아임웹 가져오기: 조회 {fetched}, 신규 {added}, 누적 {total} (>= {min_amount})")
+    return jsonify({'ok': True, 'fetched': fetched, 'added': added, 'total': total,
+                    'min_amount': min_amount, 'from': from_s, 'to': to_s})
 
 
 @app.route('/api/delivery/excel', methods=['GET'])
