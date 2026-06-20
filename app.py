@@ -1099,7 +1099,8 @@ def products_upload():
     added = 0
     conn = get_conn()
     try:
-        conn.execute("DELETE FROM product_catalog WHERE session_id IS NULL OR session_id=0")
+        # ★ 누적 업로드: 기존 데이터를 지우지 않고 새 파일을 더한다.
+        #   이름+가격이 모두 같은 항목만 중복으로 보고 건너뜀.
         seen = set((r[0], r[1]) for r in conn.execute("SELECT item_name, price FROM product_catalog").fetchall())
         for row in rows_raw[header_idx+1:]:
             if not row: continue

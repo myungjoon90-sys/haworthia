@@ -2427,11 +2427,10 @@ async function loadBuyerInvoiceSessions() {
     const cur = sel.value;
     sel.innerHTML = '<option value="">세션 선택...</option>' +
       sessions.map(s => `<option value="${s.id}">${s.live_date} · ${s.filename}</option>`).join('');
-    if (cur) sel.value = cur;
-    else if (sessions.length) {
-      sel.value = sessions[0].id;
-      loadBuyerInvoices();
-    }
+    if (cur && sessions.some(s => String(s.id) === String(cur))) sel.value = cur;
+    else if (sessions.length) sel.value = sessions[0].id;
+    // 탭에 다시 들어올 때마다 항상 새로 불러와 보관/배송 상태(입금확인 탭에서 바뀐 것)를 즉시 반영
+    if (sel.value) loadBuyerInvoices();
   } catch(e) {}
 }
 
