@@ -11,7 +11,7 @@ import socket
 import re
 
 from database import init_db, get_conn
-from imweb_api import get_paid_orders, extract_order_info, set_order_to_standby
+from imweb_api import get_paid_orders, extract_order_info, set_order_to_standby, get_order_products
 from sms_parser import parse_sms
 
 import sys
@@ -552,6 +552,22 @@ def delete_orders_by_buyer():
     return jsonify({'ok': True, 'deleted': n})
 
 
+def _imweb_date(v):
+    """아임웹 결제시각(epoch 정수/문자열 또는 ISO) → 'YYYY-MM-DD'(KST)."""
+    s = str(v or '').strip()
+    if not s:
+        return ''
+    if s.isdigit():
+        try:
+            ts = int(s)
+            if ts > 10**12:
+                ts //= 1000
+            return (datetime.utcfromtimestamp(ts) + timedelta(hours=9)).strftime('%Y-%m-%d')
+        except Exception:
+            return ''
+    return s[:10]
+
+
 def _ensure_imweb_table(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS imweb_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -653,12 +669,15 @@ def imweb_import():
                 continue
             seen.add(dedup_key)
             buyer = canon(info.get('name'), info.get('name2'))
-            odate = str(info.get('paid_at') or '')[:10]
+            odate = _imweb_date(info.get('paid_at'))
+            item = (info.get('item') or '').strip()
+            if not item:
+                item = get_order_products(ono)
             try:
                 r = conn.execute(
-                    "INSERT OR IGNORE INTO imweb_history (order_no, buyer_name, item, amount, order_date, status, created_at) "
+                    "INSERT OR REPLACE INTO imweb_history (order_no, buyer_name, item, amount, order_date, status, created_at) "
                     "VALUES (?,?,?,?,?, 'confirmed', ?)",
-                    (ono or None, buyer, info.get('item',''), amt, odate, now_kst().isoformat()))
+                    (ono or None, buyer, item, amt, odate, now_kst().isoformat()))
                 added += r.rowcount
             except Exception as e:
                 logger.warning(f"imweb_history 저장 실패: {e}")

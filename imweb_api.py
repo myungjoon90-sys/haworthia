@@ -216,6 +216,47 @@ _STANDBY_SKIP_KEYWORDS = (
     'already', 'same state', 'invalid status', 'not preparing'
 )
 
+def get_order_products(order_no):
+    """주문의 품목 상품명들을 ', '로 합쳐 반환. 실패 시 ''.
+    GET /v2/shop/orders/{order_no}/prod-orders → data.list[].items[].prod_name"""
+    if not order_no:
+        return ''
+    token = get_access_token()
+    if not token:
+        return ''
+    url = f"https://api.imweb.me/v2/shop/orders/{order_no}/prod-orders"
+    def _send(tok):
+        return requests.get(url, headers={"access-token": tok},
+                            params={"order_version": "v2"}, timeout=10)
+    try:
+        resp = _send(token)
+        data = resp.json() if resp.text else {}
+        if _is_token_error(data):
+            invalidate_token()
+            token = get_access_token(force_refresh=True)
+            if token:
+                resp = _send(token)
+                data = resp.json() if resp.text else {}
+        if data.get('code') != 200:
+            return ''
+        d = data.get('data')
+        plist = []
+        if isinstance(d, dict):
+            plist = d.get('list') or d.get('prod_orders') or []
+        elif isinstance(d, list):
+            plist = d
+        names = []
+        for po in (plist or []):
+            for it in (po.get('items') or []):
+                nm = (it.get('prod_name') or '').strip()
+                if nm:
+                    names.append(nm)
+        return ', '.join(dict.fromkeys(names))
+    except Exception as e:
+        logger.warning(f"prod-orders 조회 실패 {order_no}: {e}")
+        return ''
+
+
 def set_order_to_standby(order_no, prod_order_nos=None):
     """아임웹 주문을 '상품 준비중' → '배송대기'로 전환.
     PATCH /v2/shop/orders/{order_no}/place
