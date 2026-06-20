@@ -248,8 +248,33 @@ def upload_session():
                    VALUES (?, ?, ?, ?, ?, ?)''',
                 (session_id, live_date, p.get('item_no',''), nm, pr, p.get('remaining',''))
             )
-        if catalog_items:
-            logger.info(f"  📚 판매품 카탈로그 저장: {len(catalog_items)}건 (session={session_id})")
+        # ★ 거래명세서 품목도 판매품 리스트에 자동 포함 (번호 유무 무관)
+        #   배송비/할인/적립/선물 류와 0원 이하만 제외, 이름+가격 동일 중복만 스킵
+        _EXCL_CAT = ('배송비', '할인', '적립', '선물')
+        added_from_orders = 0
+        for o in orders:
+            nm = (o.get('item') or '').strip()
+            if not nm:
+                continue
+            try:
+                pr = int(o.get('amount'))
+            except Exception:
+                pr = None
+            if not pr or pr <= 0:
+                continue
+            if any(k in nm for k in _EXCL_CAT):
+                continue
+            if (nm, pr) in existing_pairs:
+                continue
+            existing_pairs.add((nm, pr))
+            conn.execute(
+                '''INSERT INTO product_catalog (session_id, live_date, item_no, item_name, price, remaining)
+                   VALUES (?, ?, ?, ?, ?, ?)''',
+                (session_id, live_date, o.get('item_no',''), nm, pr, '')
+            )
+            added_from_orders += 1
+        if catalog_items or added_from_orders:
+            logger.info(f"  📚 판매품 카탈로그 저장: 시트 {len(catalog_items)}건 + 거래명세서 {added_from_orders}건 (session={session_id})")
     except Exception as e:
         logger.warning(f"판매품 카탈로그 저장 실패: {e}")
 
