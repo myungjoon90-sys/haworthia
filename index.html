@@ -441,7 +441,10 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 <header>
   <div class="logo">🌿</div>
   <h1>지양하월시아 입금확인</h1>
-  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <button class="btn" style="background:#2563eb;color:#fff;padding:6px 12px;" onclick="backupAll()" title="모든 데이터(세션/거래명세서/회원/판매품/구매이력/위탁/매핑/은행)를 파일 하나로 백업">💾 전체 백업</button>
+    <input type="file" id="restoreFileInput" accept=".db,.sqlite,.sqlite3" style="display:none;" onchange="restoreAll(this.files)">
+    <button class="btn" style="background:#6b7280;color:#fff;padding:6px 12px;" onclick="document.getElementById('restoreFileInput').click()" title="백업 파일로 전체 복원">♻ 복원</button>
     <span class="server-label" id="serverLabel">서버 확인 중...</span>
     <div class="server-dot" id="serverDot"></div>
   </div>
@@ -750,6 +753,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <input type="text" id="historySearch" oninput="filterHistory()" placeholder="🔍 닉네임/상품명 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:260px;">
         <button class="btn btn-primary" id="imwebImportBtn" onclick="imwebImport()" title="아임웹 쇼핑 주문 중 20만원 이상을 구매이력에 추가">📥 아임웹 20만↑ 가져오기</button>
+        <input type="file" id="bankFileInput" accept=".xls,.xlsx" multiple style="display:none;" onchange="bankImport(this.files)">
+        <button class="btn" id="bankImportBtn" style="background:#0f9d58;color:#fff;" onclick="document.getElementById('bankFileInput').click()" title="국민/농협 입출금 엑셀을 올리면 입금건을 이름별로 구매이력에 합산">🏦 은행입금 합산</button>
       </div>
     </div>
     <p style="font-size:13px;color:var(--muted);margin:0 16px 6px;">💡 구매자 닉네임 또는 상품명으로 검색하세요. 지금까지의 모든 구매 내역(상품·단가 포함)입니다.</p>
@@ -1363,6 +1368,24 @@ async function deleteConfirmedBuyer(sid, buyer) {
 // 🧾 구매 이력 (닉네임/상품명 검색, 총 합계)
 let _historyAll = [];
 let _historyTimer = null;
+async function bankImport(files) {
+  if (!files || !files.length) return;
+  const btn = document.getElementById('bankImportBtn');
+  const o = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 처리 중...'; }
+  try {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    const r = await fetch(API + '/api/bank/import-history', {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) { toast(`🏦 은행입금 ${d.added}건 추가 (스캔 ${d.scanned}, 누적 ${d.total})`, 'ok'); loadHistory(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+  finally {
+    const bf = document.getElementById('bankFileInput'); if (bf) bf.value = '';
+    if (btn) { btn.disabled = false; btn.innerHTML = o; }
+  }
+}
 async function imwebImport() {
   if (!confirm('아임웹 쇼핑 주문에서 20만원 이상 주문을 가져와 구매이력에 추가합니다.\n주문이 많으면 수십 초 걸릴 수 있어요. 계속할까요?')) return;
   const btn = document.getElementById('imwebImportBtn');
@@ -1405,7 +1428,7 @@ function _renderHistory(rows) {
     if (rendered >= cap) { cut = true; break; }
     const itemRows = g.items.map(r => `
           <tr style="border-top:1px solid var(--border);">
-            <td style="padding:7px 12px;color:var(--muted);white-space:nowrap;width:140px;">${_esc(r.live_date||'')}${r.source==='아임웹' ? ' <span style="background:#2563eb;color:#fff;border-radius:3px;padding:0 5px;font-size:11px;">아임웹</span>' : ''}</td>
+            <td style="padding:7px 12px;color:var(--muted);white-space:nowrap;width:140px;">${_esc(r.live_date||'')}${r.source==='아임웹' ? ' <span style="background:#2563eb;color:#fff;border-radius:3px;padding:0 5px;font-size:11px;">아임웹</span>' : (r.source && r.source.indexOf('은행')===0 ? ' <span style="background:#0f9d58;color:#fff;border-radius:3px;padding:0 5px;font-size:11px;">'+_esc(r.source)+'</span>' : '')}</td>
             <td style="padding:7px 12px;">${_esc(r.item||'')}</td>
             <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;width:120px;">${Number(r.amount||0).toLocaleString()}</td>
             <td style="padding:7px 12px;text-align:right;width:90px;color:${r.status==='confirmed'?'var(--green)':'var(--muted)'};">${statusKr[r.status]||r.status||''}</td>
@@ -3086,6 +3109,27 @@ async function testSms() {
 // ══════════════════════════════════════════════════════════════════
 //  Toast
 // ══════════════════════════════════════════════════════════════════
+function backupAll() {
+  const a = document.createElement('a');
+  a.href = API + '/api/backup/db';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => document.body.removeChild(a), 200);
+  toast('💾 전체 백업 파일을 내려받습니다', 'ok');
+}
+async function restoreAll(files) {
+  if (!files || !files.length) return;
+  if (!confirm('백업 파일로 전체 데이터를 복원합니다.\n현재 데이터는 백업본으로 덮어쓰여집니다. 계속할까요?')) {
+    const ri = document.getElementById('restoreFileInput'); if (ri) ri.value=''; return;
+  }
+  try {
+    const fd = new FormData(); fd.append('file', files[0]);
+    const r = await fetch(API + '/api/backup/restore', {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) { toast(`♻ 복원 완료 (테이블 ${d.tables}개). 새로고침합니다`, 'ok'); setTimeout(() => location.reload(), 1200); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+  finally { const ri = document.getElementById('restoreFileInput'); if (ri) ri.value=''; }
+}
 function toast(msg, type='ok') {
   const wrap = document.getElementById('toastWrap');
   const el = document.createElement('div');

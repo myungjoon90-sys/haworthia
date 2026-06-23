@@ -606,6 +606,106 @@ def _ensure_imweb_table(conn):
     )''')
 
 
+def _ensure_bank_table(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS bank_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tx_key TEXT UNIQUE,
+        bank TEXT,
+        buyer_name TEXT,
+        raw_name TEXT,
+        amount INTEGER,
+        tx_date TEXT,
+        created_at TEXT
+    )''')
+
+
+def _norm_bank_date(s):
+    s = str(s or '')
+    m = re.search(r'(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})', s)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return s[:10]
+
+
+def _canon_bank_name(raw, real2nick):
+    raw = (raw or '').strip()
+    m = re.search(r'\(([^)]+)\)', raw)
+    if m:
+        inside = m.group(1).strip()
+        before = raw[:m.start()].strip()
+        if before in real2nick:
+            return real2nick[before]
+        return inside or before or raw
+    if raw in real2nick:
+        return real2nick[raw]
+    return raw
+
+
+@app.route('/api/backup/db', methods=['GET'])
+def backup_db():
+    """전체 데이터(모든 탭: 세션/거래명세서/회원/판매품/구매이력/위탁/매핑/은행/아임웹 등)를
+    SQLite DB 파일 하나로 내려받기. 이 파일만 보관하면 전체 백업."""
+    import tempfile, sqlite3
+    conn = get_conn()
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db'); tmp.close()
+        dst = sqlite3.connect(tmp.name)
+        with dst:
+            conn.backup(dst)   # 일관된 스냅샷
+        dst.close()
+    finally:
+        conn.close()
+    fname = f"haworthia_backup_{now_kst().strftime('%Y%m%d_%H%M')}.db"
+    return send_file(tmp.name, as_attachment=True, download_name=fname,
+                     mimetype='application/octet-stream')
+
+
+@app.route('/api/backup/restore', methods=['POST'])
+def backup_restore():
+    """백업 DB 파일을 올려 전체 데이터를 복원(현재 데이터는 백업본으로 덮어씀)."""
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    import tempfile, sqlite3
+    data = request.files['file'].read()
+    if not data:
+        return jsonify({'error': '빈 파일'}), 400
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db')
+    tmp.write(data); tmp.close()
+    # 업로드 파일이 정상 SQLite인지 + 테이블 목록 확인
+    try:
+        src = sqlite3.connect(tmp.name)
+        tbls = src.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        src.close()
+    except Exception as e:
+        return jsonify({'error': f'올바른 백업 파일이 아닙니다: {e}'}), 400
+    if not tbls:
+        return jsonify({'error': '백업 파일에 테이블이 없습니다'}), 400
+    conn = get_conn()
+    try:
+        conn.execute("ATTACH ? AS bak", (tmp.name,))
+        conn.execute("PRAGMA foreign_keys=OFF")
+        n = 0
+        for name, sql in tbls:
+            conn.execute(f'DROP TABLE IF EXISTS main."{name}"')
+            if sql:
+                conn.execute(sql)   # 백업본 스키마로 재생성 (main에 생성)
+            conn.execute(f'INSERT INTO main."{name}" SELECT * FROM bak."{name}"')
+            n += 1
+        conn.commit()
+        conn.execute("DETACH bak")
+        logger.info(f"♻ 전체 복원 완료: 테이블 {n}개")
+        return jsonify({'ok': True, 'tables': n})
+    except Exception as e:
+        logger.exception(f"복원 실패: {e}")
+        try: conn.rollback(); conn.execute("DETACH bak")
+        except Exception: pass
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
 @app.route('/api/purchase-history', methods=['GET'])
 def purchase_history():
     """전체 구매 이력 = 거래명세서(orders) + 아임웹 가져오기(imweb_history) 합본.
@@ -623,6 +723,11 @@ def purchase_history():
         "SELECT buyer_name, item, amount, status, order_date FROM imweb_history "
         "WHERE buyer_name NOT LIKE '%문자발송%'"
     ).fetchall()
+    _ensure_bank_table(conn)
+    bank = conn.execute(
+        "SELECT buyer_name, bank, amount, tx_date FROM bank_history "
+        "WHERE buyer_name NOT LIKE '%문자발송%'"
+    ).fetchall()
     conn.close()
     out = []
     for r in orders:
@@ -631,10 +736,76 @@ def purchase_history():
     for r in imweb:
         out.append({'buyer_name': r['buyer_name'], 'item': r['item'], 'item_no': '',
                     'amount': r['amount'], 'status': r['status'], 'live_date': r['order_date'], 'source': '아임웹'})
+    for r in bank:
+        out.append({'buyer_name': r['buyer_name'], 'item': '🏦 입금 (' + (r['bank'] or '은행') + ')', 'item_no': '',
+                    'amount': r['amount'], 'status': 'confirmed', 'live_date': r['tx_date'], 'source': '은행(' + (r['bank'] or '') + ')'})
     # 구매자 가나다 ASC, 같은 구매자 안에서 날짜 DESC (stable sort 활용)
     out.sort(key=lambda x: (x['live_date'] or ''), reverse=True)
     out.sort(key=lambda x: (x['buyer_name'] or '').lower())
     return jsonify(out)
+
+
+@app.route('/api/bank/import-history', methods=['POST'])
+def bank_import_history():
+    """은행 입출금 엑셀(국민/농협 등) 업로드 → 입금건을 이름별로 구매이력에 누적.
+    닉네임 매핑으로 이름 통일, 거래 단위 중복 방지(INSERT OR IGNORE)."""
+    files = request.files.getlist('files')
+    if not files and 'file' in request.files:
+        files = [request.files['file']]
+    if not files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    conn = get_conn()
+    _ensure_bank_table(conn)
+    real2nick = {}
+    for n in conn.execute("SELECT nickname, realname FROM nick_mappings WHERE COALESCE(negative,0)=0").fetchall():
+        if n['nickname'] and n['realname']:
+            real2nick[(n['realname'] or '').strip()] = (n['nickname'] or '').strip()
+    _EXCL = ('이자', '결산', '카드입금', '영농조합', '법인지양', '스마트스토어',
+             '네이버페이', '페이정산', '정산', '수수료')
+    scanned = added = 0
+    per_file = []
+    for fs in files:
+        fn = (getattr(fs, 'filename', '') or '')
+        low = fn.lower()
+        bank = '국민' if ('국민' in fn or 'kb' in low) else ('농협' if ('농협' in fn or 'nh' in low) else '기타')
+        try:
+            deposits = parse_bank_excel(fs)
+        except Exception as e:
+            per_file.append({'file': fn, 'error': str(e)})
+            continue
+        fadded = 0
+        for d in deposits:
+            scanned += 1
+            raw = (d.get('name') or '').strip()
+            if not raw:
+                continue
+            if any(k in raw for k in _EXCL):
+                continue
+            try:
+                amt = int(d.get('amount') or 0)
+            except Exception:
+                amt = 0
+            if amt <= 0:
+                continue
+            dt_full = (d.get('datetime') or d.get('date') or '').strip()
+            tx_key = f"{bank}|{raw}|{amt}|{dt_full}"
+            buyer = _canon_bank_name(raw, real2nick)
+            odate = _norm_bank_date(d.get('date') or dt_full)
+            try:
+                r = conn.execute(
+                    "INSERT OR IGNORE INTO bank_history (tx_key, bank, buyer_name, raw_name, amount, tx_date, created_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (tx_key, bank, buyer, raw, amt, odate, now_kst().isoformat()))
+                added += r.rowcount
+                fadded += r.rowcount
+            except Exception as e:
+                logger.warning(f"bank_history 저장 실패: {e}")
+        per_file.append({'file': fn, 'bank': bank, 'deposits': len(deposits), 'added': fadded})
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) AS c FROM bank_history").fetchone()['c']
+    conn.close()
+    logger.info(f"🏦 은행 입금 가져오기: 스캔 {scanned}, 신규 {added}, 누적 {total}")
+    return jsonify({'ok': True, 'added': added, 'scanned': scanned, 'total': total, 'files': per_file})
 
 
 @app.route('/api/imweb/import', methods=['POST'])
@@ -1925,18 +2096,17 @@ def parse_bank_excel(file_storage):
         for r in ws.values:
             rows.append(list(r))
 
-    header_idx = name_col = amount_col = date_col = -1
-    for i, row in enumerate(rows[:20]):
+    header_idx = name_col = amount_col = date_col = time_col = -1
+    _NAME_HINTS = ('보낸', '받는', '거래기록', '입금자', '의뢰인', '보내는', '받으')
+    for i, row in enumerate(rows[:25]):
         if not row: continue
         cells = [str(c or '').strip() for c in row]
-        ni = next((j for j, c in enumerate(cells) if '보낸' in c or '받는' in c), -1)
-        ai = next((j for j, c in enumerate(cells) if c == '입금액(원)' or c == '입금액' or '입금' in c), -1)
+        ni = next((j for j, c in enumerate(cells) if any(h in c for h in _NAME_HINTS)), -1)
+        ai = next((j for j, c in enumerate(cells) if c in ('입금액(원)', '입금액', '입금금액(원)', '입금금액') or '입금' in c), -1)
         di = next((j for j, c in enumerate(cells) if '거래일' in c or '날짜' in c), -1)
+        ti = next((j for j, c in enumerate(cells) if c == '거래시간' or c == '시간'), -1)
         if ni >= 0 and ai >= 0:
-            header_idx = i
-            name_col = ni
-            amount_col = ai
-            date_col = di
+            header_idx, name_col, amount_col, date_col, time_col = i, ni, ai, di, ti
             break
     if header_idx < 0:
         return []
@@ -1957,7 +2127,11 @@ def parse_bank_excel(file_storage):
         date_str = ''
         if date_col >= 0 and date_col < len(row):
             date_str = str(row[date_col] or '').strip()
-        deposits.append({'name': name, 'amount': amt, 'date': date_str})
+        time_str = ''
+        if time_col >= 0 and time_col < len(row):
+            time_str = str(row[time_col] or '').strip()
+        datetime_str = (date_str + ' ' + time_str).strip() if (time_str and time_str not in date_str) else date_str
+        deposits.append({'name': name, 'amount': amt, 'date': date_str, 'datetime': datetime_str})
     return deposits
 
 

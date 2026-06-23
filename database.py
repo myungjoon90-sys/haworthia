@@ -1,7 +1,17 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'haworthia.db')
+# 영구 디스크(Railway Volume)가 연결돼 있으면 그 경로에 DB를 둔다 → 재배포해도 데이터 유지.
+# Railway는 볼륨 마운트 경로를 환경변수 RAILWAY_VOLUME_MOUNT_PATH 로 제공한다.
+_DB_DIR = (os.environ.get('RAILWAY_VOLUME_MOUNT_PATH')
+           or os.environ.get('DB_DIR')
+           or os.path.dirname(__file__))
+try:
+    os.makedirs(_DB_DIR, exist_ok=True)
+except Exception:
+    _DB_DIR = os.path.dirname(__file__)
+DB_PATH = os.path.join(_DB_DIR, 'haworthia.db')
+print(f"🗄️  DB 경로: {DB_PATH}")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
