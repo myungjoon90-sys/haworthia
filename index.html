@@ -752,6 +752,11 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <h3>🧾 구매 이력 <span id="history-count" style="color:var(--muted);font-size:14px;">(0건)</span></h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <input type="text" id="historySearch" oninput="filterHistory()" placeholder="🔍 닉네임/상품명 검색" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:260px;">
+        <select id="historySort" onchange="filterHistory()" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);">
+          <option value="name">정렬: 구매자순</option>
+          <option value="amt_desc">금액 높은순 ↓</option>
+          <option value="amt_asc">금액 낮은순 ↑</option>
+        </select>
         <button class="btn btn-primary" id="imwebImportBtn" onclick="imwebImport()" title="아임웹 쇼핑 주문 중 20만원 이상을 구매이력에 추가">📥 아임웹 20만↑ 가져오기</button>
         <input type="file" id="bankFileInput" accept=".xls,.xlsx" multiple style="display:none;" onchange="bankImport(this.files)">
         <button class="btn" id="bankImportBtn" style="background:#0f9d58;color:#fff;" onclick="document.getElementById('bankFileInput').click()" title="국민/농협 입출금 엑셀을 올리면 입금건을 이름별로 구매이력에 합산">🏦 은행입금 합산</button>
@@ -1399,6 +1404,17 @@ async function imwebImport() {
   } catch(e) { toast('서버 연결 실패(아임웹 조회 지연일 수 있음)', 'err'); }
   finally { if (btn) { btn.disabled = false; btn.innerHTML = o; } }
 }
+async function deleteHistoryEntry(src, id) {
+  let msg = '이 항목을 구매이력에서 삭제할까요?';
+  if (src === 'order') msg += '\n(거래명세서 주문이라 결제·위탁 등 다른 탭에서도 사라집니다)';
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch(API + '/api/purchase-history/entry?src=' + encodeURIComponent(src) + '&id=' + encodeURIComponent(id), {method:'DELETE'});
+    const d = await r.json();
+    if (d.ok) { toast('🗑 삭제됨', 'ok'); loadHistory(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
 async function loadHistory() {
   const box = document.getElementById('historyContainer');
   if (box) box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</div>';
@@ -1421,6 +1437,9 @@ function _renderHistory(rows) {
     if (!(b in idx)) { idx[b] = groups.length; groups.push({buyer:b, items:[], sum:0}); }
     const g = groups[idx[b]]; g.items.push(r); g.sum += Number(r.amount || 0);
   }
+  const sort = (document.getElementById('historySort')||{value:'name'}).value;
+  if (sort === 'amt_desc') groups.sort((a,b)=>b.sum-a.sum);
+  else if (sort === 'amt_asc') groups.sort((a,b)=>a.sum-b.sum);
   const statusKr = {confirmed:'입금확인', pending:'대기'};
   const cap = 2000;
   let html = '', rendered = 0, cut = false;
@@ -1432,6 +1451,7 @@ function _renderHistory(rows) {
             <td style="padding:7px 12px;">${_esc(r.item||'')}</td>
             <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;width:120px;">${Number(r.amount||0).toLocaleString()}</td>
             <td style="padding:7px 12px;text-align:right;width:90px;color:${r.status==='confirmed'?'var(--green)':'var(--muted)'};">${statusKr[r.status]||r.status||''}</td>
+            <td style="padding:7px 8px;text-align:center;width:40px;"><button onclick="deleteHistoryEntry('${r.src}', ${r.id})" title="이 줄 삭제" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;">🗑</button></td>
           </tr>`).join('');
     rendered += g.items.length;
     html += `

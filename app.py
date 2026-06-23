@@ -713,36 +713,63 @@ def purchase_history():
     conn = get_conn()
     _ensure_imweb_table(conn)
     orders = conn.execute('''
-        SELECT o.buyer_name, o.item, o.item_no, o.amount, o.status, ls.live_date
+        SELECT o.id, o.buyer_name, o.item, o.item_no, o.amount, o.status, ls.live_date
         FROM orders o LEFT JOIN live_sessions ls ON o.session_id = ls.id
         WHERE o.buyer_name NOT LIKE '%문자발송%'
           AND o.buyer_name NOT LIKE '%입금x%'
           AND o.buyer_name NOT LIKE '%입금 x%'
     ''').fetchall()
     imweb = conn.execute(
-        "SELECT buyer_name, item, amount, status, order_date FROM imweb_history "
+        "SELECT id, buyer_name, item, amount, status, order_date FROM imweb_history "
         "WHERE buyer_name NOT LIKE '%문자발송%'"
     ).fetchall()
     _ensure_bank_table(conn)
     bank = conn.execute(
-        "SELECT buyer_name, bank, amount, tx_date FROM bank_history "
+        "SELECT id, buyer_name, bank, amount, tx_date FROM bank_history "
         "WHERE buyer_name NOT LIKE '%문자발송%'"
     ).fetchall()
     conn.close()
     out = []
     for r in orders:
-        out.append({'buyer_name': r['buyer_name'], 'item': r['item'], 'item_no': r['item_no'],
+        out.append({'id': r['id'], 'src': 'order', 'buyer_name': r['buyer_name'], 'item': r['item'], 'item_no': r['item_no'],
                     'amount': r['amount'], 'status': r['status'], 'live_date': r['live_date'], 'source': '거래명세서'})
     for r in imweb:
-        out.append({'buyer_name': r['buyer_name'], 'item': r['item'], 'item_no': '',
+        out.append({'id': r['id'], 'src': 'imweb', 'buyer_name': r['buyer_name'], 'item': r['item'], 'item_no': '',
                     'amount': r['amount'], 'status': r['status'], 'live_date': r['order_date'], 'source': '아임웹'})
     for r in bank:
-        out.append({'buyer_name': r['buyer_name'], 'item': '🏦 입금 (' + (r['bank'] or '은행') + ')', 'item_no': '',
+        out.append({'id': r['id'], 'src': 'bank', 'buyer_name': r['buyer_name'], 'item': '🏦 입금 (' + (r['bank'] or '은행') + ')', 'item_no': '',
                     'amount': r['amount'], 'status': 'confirmed', 'live_date': r['tx_date'], 'source': '은행(' + (r['bank'] or '') + ')'})
     # 구매자 가나다 ASC, 같은 구매자 안에서 날짜 DESC (stable sort 활용)
     out.sort(key=lambda x: (x['live_date'] or ''), reverse=True)
     out.sort(key=lambda x: (x['buyer_name'] or '').lower())
     return jsonify(out)
+
+
+@app.route('/api/purchase-history/entry', methods=['DELETE'])
+def purchase_history_delete():
+    """구매이력 한 줄 삭제. src: order(거래명세서 주문) / imweb / bank."""
+    src = (request.args.get('src') or '').strip()
+    try:
+        rid = int(request.args.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'id 필요'}), 400
+    table = {'order': 'orders', 'imweb': 'imweb_history', 'bank': 'bank_history'}.get(src)
+    if not table:
+        return jsonify({'error': 'src 오류'}), 400
+    conn = get_conn()
+    try:
+        if src == 'imweb':
+            _ensure_imweb_table(conn)
+        elif src == 'bank':
+            _ensure_bank_table(conn)
+        n = conn.execute(f"DELETE FROM {table} WHERE id=?", (rid,)).rowcount
+        conn.commit()
+        logger.info(f"🗑 구매이력 삭제: {src} id={rid} ({n}건)")
+        return jsonify({'ok': True, 'deleted': n, 'src': src})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
 
 
 @app.route('/api/bank/import-history', methods=['POST'])
