@@ -739,6 +739,16 @@ def purchase_history():
     for r in bank:
         out.append({'id': r['id'], 'src': 'bank', 'buyer_name': r['buyer_name'], 'item': '🏦 입금 (' + (r['bank'] or '은행') + ')', 'item_no': '',
                     'amount': r['amount'], 'status': 'confirmed', 'live_date': r['tx_date'], 'source': '은행(' + (r['bank'] or '') + ')'})
+    # ── 제외 필터 ──
+    # (1) 특정 단어가 들어간 이름 제외, (2) 구매자별 합계 50만원 이하는 숨김
+    EXCLUDE_KEYWORDS = ('주명준', '주광준', '영농조합법인지양', '가수금', '이니시스', '법인')
+    MIN_BUYER_TOTAL = 500000
+    out = [r for r in out if not any(k in (r['buyer_name'] or '') for k in EXCLUDE_KEYWORDS)]
+    _tot = {}
+    for r in out:
+        _tot[r['buyer_name']] = _tot.get(r['buyer_name'], 0) + int(r['amount'] or 0)
+    out = [r for r in out if _tot.get(r['buyer_name'], 0) > MIN_BUYER_TOTAL]
+
     # 구매자 가나다 ASC, 같은 구매자 안에서 날짜 DESC (stable sort 활용)
     out.sort(key=lambda x: (x['live_date'] or ''), reverse=True)
     out.sort(key=lambda x: (x['buyer_name'] or '').lower())
