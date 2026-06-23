@@ -772,6 +772,27 @@ def purchase_history_delete():
         conn.close()
 
 
+@app.route('/api/purchase-history/buyer', methods=['DELETE'])
+def purchase_history_delete_buyer():
+    """한 구매자의 구매이력 전체 삭제 (거래명세서 주문 + 아임웹 + 은행)."""
+    name = (request.args.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'name 필요'}), 400
+    conn = get_conn()
+    try:
+        _ensure_imweb_table(conn); _ensure_bank_table(conn)
+        n1 = conn.execute("DELETE FROM orders WHERE buyer_name=?", (name,)).rowcount
+        n2 = conn.execute("DELETE FROM imweb_history WHERE buyer_name=?", (name,)).rowcount
+        n3 = conn.execute("DELETE FROM bank_history WHERE buyer_name=?", (name,)).rowcount
+        conn.commit()
+        logger.info(f"🗑 구매자 전체삭제: {name} (주문 {n1}, 아임웹 {n2}, 은행 {n3})")
+        return jsonify({'ok': True, 'deleted': n1+n2+n3, 'orders': n1, 'imweb': n2, 'bank': n3})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
 @app.route('/api/bank/import-history', methods=['POST'])
 def bank_import_history():
     """은행 입출금 엑셀(국민/농협 등) 업로드 → 입금건을 이름별로 구매이력에 누적.

@@ -1405,13 +1405,20 @@ async function imwebImport() {
   finally { if (btn) { btn.disabled = false; btn.innerHTML = o; } }
 }
 async function deleteHistoryEntry(src, id) {
-  let msg = '이 항목을 구매이력에서 삭제할까요?';
-  if (src === 'order') msg += '\n(거래명세서 주문이라 결제·위탁 등 다른 탭에서도 사라집니다)';
-  if (!confirm(msg)) return;
+  // 확인창 없이 즉시 삭제
   try {
     const r = await fetch(API + '/api/purchase-history/entry?src=' + encodeURIComponent(src) + '&id=' + encodeURIComponent(id), {method:'DELETE'});
     const d = await r.json();
     if (d.ok) { toast('🗑 삭제됨', 'ok'); loadHistory(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+async function deleteHistoryBuyer(name) {
+  if (!confirm(`'${name}' 구매자의 구매이력을 전체 삭제할까요?\n(거래명세서 주문도 포함되어 결제·위탁 등 다른 탭에서도 사라집니다)`)) return;
+  try {
+    const r = await fetch(API + '/api/purchase-history/buyer?name=' + encodeURIComponent(name), {method:'DELETE'});
+    const d = await r.json();
+    if (d.ok) { toast(`🗑 '${name}' 전체 삭제 (${d.deleted}건)`, 'ok'); loadHistory(); }
     else toast('오류: ' + (d.error || '실패'), 'err');
   } catch(e) { toast('서버 연결 실패', 'err'); }
 }
@@ -1458,7 +1465,10 @@ function _renderHistory(rows) {
       <div style="border:1px solid var(--border);border-radius:10px;margin-bottom:16px;overflow:hidden;background:var(--surface);">
         <div style="display:flex;justify-content:space-between;align-items:center;background:#1f2a37;color:#fff;padding:11px 14px;">
           <span style="font-weight:700;font-size:15px;">👤 ${_esc(g.buyer)} <span style="color:#9aa7b4;font-weight:400;font-size:12px;">· ${g.items.length}건</span></span>
-          <span style="font-weight:700;color:#7ee2a8;">합계 ${g.sum.toLocaleString()}원</span>
+          <span style="display:flex;align-items:center;gap:10px;">
+            <span style="font-weight:700;color:#7ee2a8;">합계 ${g.sum.toLocaleString()}원</span>
+            <button onclick="deleteHistoryBuyer('${_esc(g.buyer).replace(/['\\]/g,'')}')" title="이 구매자 전체 삭제" style="background:#b91c1c;color:#fff;border:none;border-radius:5px;padding:4px 9px;font-size:12px;cursor:pointer;">🗑 전체삭제</button>
+          </span>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:14px;">
           <tbody>${itemRows}</tbody>
