@@ -40,6 +40,7 @@
 /* 합계 행: 글씨 키우고 높이 1.5배 */
 .consign-card tfoot td { font-size: 19px; padding: 14px 10px; }
 .consign-card { width: fit-content; max-width: 100%; }
+.consign-card.settled .tbl-wrap, .consign-card.settled .card-head h3 { filter: grayscale(1); opacity: 0.5; }
 /* 위탁정산 페이지일 때 본문 폭 확장 */
 body.page-consign-active .container { max-width: 1500px; }
 body.page-invoice-active .container { max-width: 1280px; }
@@ -1892,7 +1893,14 @@ async function loadConsign() {
       return;
     }
     const fmt = (n) => Number(n || 0).toLocaleString();
-    container.innerHTML = groups.map(g => renderConsignGroup(g, fmt)).join('');
+    const active = groups.filter(g => !g.settled);
+    const settled = groups.filter(g => g.settled);
+    let html = active.map(g => renderConsignGroup(g, fmt)).join('');
+    if (settled.length) {
+      html += `<div style="margin:26px 0 12px;padding-top:14px;border-top:2px dashed var(--border);font-weight:700;color:var(--muted);font-size:15px;">✅ 정산완료 (${settled.length}) — 새 날짜는 위쪽에만 추가됩니다</div>`;
+      html += settled.map(g => renderConsignGroup(g, fmt)).join('');
+    }
+    container.innerHTML = html;
   } catch(e) {
     container.innerHTML = '<div class="card"><div class="card-body" style="color:var(--red);">불러오기 실패: ' + e.message + '</div></div>';
   }
@@ -1937,10 +1945,11 @@ function renderConsignGroup(g, fmt) {
   }).join('');
 
   return `
-    <div class="card consign-card" style="margin-bottom:20px;border-color:#FFA500;">
+    <div class="card consign-card${g.settled ? ' settled' : ''}" style="margin-bottom:20px;border-color:#FFA500;">
       <div class="card-head" style="background:#fff8e6;color:#222;">
         <h3 style="color:#222;">${_esc(titleText)} <span style="font-weight:400;font-size:14px;color:#888;">· 위탁자: ${_esc(consignor)}</span></h3>
         <span class="consign-actions" style="display:flex;gap:8px;">
+          <button class="btn" style="background:${g.settled ? '#16a34a' : '#6b7280'};color:#fff;" onclick="toggleSettle(${g.session_id == null ? 'null' : g.session_id}, '${consignor.replace(/['"\\]/g,'')}', ${g.settled ? 0 : 1})">${g.settled ? '✅ 정산완료' : '☐ 정산완료'}</button>
           <button class="btn" style="background:#16a34a;color:#fff;" onclick="downloadConsignImage(this, '${consignor.replace(/['"\\]/g,'')}')">🖼 이미지 저장</button>
           <button class="btn btn-blue" onclick="downloadConsignExcel('${consignor.replace(/['"\\]/g,'')}')">⬇ 엑셀 다운로드</button>
         </span>
@@ -2029,6 +2038,17 @@ async function downloadAllConsignExcel() {
   }
 }
 
+async function toggleSettle(sid, consignor, settled) {
+  try {
+    const r = await fetch(API + '/api/consignment/settle', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id: sid, consignor: consignor, settled: !!settled})
+    });
+    const d = await r.json();
+    if (d.ok) { toast(settled ? '✅ 정산완료 처리' : '↩️ 정산완료 해제', 'ok'); loadConsign(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
 function downloadConsignExcel(consignor) {
   const sid = (document.getElementById('consignSessionFilter')||{}).value;
   const url = API + '/api/consignment/excel?consignor=' + encodeURIComponent(consignor)

@@ -1439,6 +1439,38 @@ def _consignor_of(item_str):
     return '기타'
 
 
+def _ensure_settled_table(conn):
+    conn.execute('''CREATE TABLE IF NOT EXISTS consign_settled (
+        session_id INTEGER,
+        consignor TEXT,
+        settled_at TEXT,
+        UNIQUE(session_id, consignor)
+    )''')
+
+
+@app.route('/api/consignment/settle', methods=['POST'])
+def consignment_settle():
+    """위탁자 카드 정산완료 토글. body: {session_id, consignor, settled: true/false}"""
+    data = request.get_json(silent=True) or {}
+    sid = data.get('session_id')
+    cons = (data.get('consignor') or '').strip()
+    settled = bool(data.get('settled'))
+    if not cons:
+        return jsonify({'error': 'consignor 필요'}), 400
+    conn = get_conn()
+    try:
+        _ensure_settled_table(conn)
+        if settled:
+            conn.execute("INSERT OR REPLACE INTO consign_settled (session_id, consignor, settled_at) VALUES (?,?,?)",
+                         (sid, cons, now_kst().isoformat()))
+        else:
+            conn.execute("DELETE FROM consign_settled WHERE session_id IS ? AND consignor=?", (sid, cons))
+        conn.commit()
+        return jsonify({'ok': True, 'settled': settled})
+    finally:
+        conn.close()
+
+
 @app.route('/api/consignment/list', methods=['GET'])
 def consignment_list():
     """위탁자(코드)별 위탁판매 정산 데이터.
@@ -1480,6 +1512,7 @@ def consignment_list():
         if cons not in grouped:
             grouped[cons] = {
                 'consignor': cons,
+                'session_id': r['session_id'],
                 'live_date': r['live_date'],
                 'filename': r['filename'],
                 'rows': [],
@@ -1508,6 +1541,14 @@ def consignment_list():
         grouped[cons]['sum_after_platform'] += after_platform
         grouped[cons]['sum_after_remit'] += after_remit
 
+    # 정산완료 플래그 부여 (session_id + consignor 기준)
+    conn2 = get_conn()
+    _ensure_settled_table(conn2)
+    done = set((row['session_id'], row['consignor'])
+               for row in conn2.execute("SELECT session_id, consignor FROM consign_settled").fetchall())
+    conn2.close()
+    for g in grouped.values():
+        g['settled'] = 1 if (g.get('session_id'), g['consignor']) in done else 0
     # 정렬: 위탁자 코드 가나다/영문순
     return jsonify(sorted(grouped.values(), key=lambda x: x['consignor']))
 
