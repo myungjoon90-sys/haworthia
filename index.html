@@ -1310,7 +1310,7 @@ function renderConfirmed(items) {
       : `<button class="btn" style="padding:4px 10px;background:#6b7280;color:#fff;" onclick="unstoreConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="보관 해제 → 입금확인 탭으로 복귀">↩️ 복귀</button>`;
     return `
       <tr>
-        <td><strong>${i.buyer_name}</strong></td>
+        <td><strong>${i.buyer_name}</strong><br><span style="font-size:11px;color:var(--muted);">📅 ${i.live_date||'-'}</span></td>
         <td style="font-size:12px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
         <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
         <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
