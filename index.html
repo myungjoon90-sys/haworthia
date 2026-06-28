@@ -564,8 +564,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 
   <!-- 통계 -->
   <div class="stat-grid" style="grid-template-columns:repeat(5,1fr);">
-    <div class="stat-card blue" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
-      <div class="stat-val" id="auto-total">-</div><div class="stat-lbl">전체 주문자</div></div>
+    <div class="stat-card blue" onclick="switchInnerTab('all')" style="cursor:pointer;" title="클릭: 전체 주문자 보기">
+      <div class="stat-val" id="auto-total">-</div><div class="stat-lbl">전체 주문자 🔍</div></div>
     <div class="stat-card yellow" onclick="switchInnerTab('pending')" style="cursor:pointer;" title="클릭: 미확인 대기 보기">
       <div class="stat-val" id="auto-pending">-</div><div class="stat-lbl">⏳ 미확인 대기 🔍</div></div>
     <div class="stat-card yellow" onclick="switchInnerTab('candidates')" style="cursor:pointer;background:rgba(255,165,0,0.08);" title="클릭: 의심가는 후보 보기">
@@ -589,6 +589,12 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     </div>
     <div class="inner-tab" id="tab-stored" onclick="switchInnerTab('stored')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
       📦 입금확인(보관) <span id="stored-count-badge" class="nav-badge" style="background:#f59e0b;"></span>
+    </div>
+    <div class="inner-tab" id="tab-shipped" onclick="switchInnerTab('shipped')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+      🚚 배송완료 <span id="shipped-count-badge" class="nav-badge" style="background:#16a34a;"></span>
+    </div>
+    <div class="inner-tab" id="tab-all" onclick="switchInnerTab('all')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">
+      📋 전체 주문자
     </div>
   </div>
 
@@ -680,6 +686,46 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
           </tr></thead>
           <tbody id="storedConfirmedTbody">
             <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">보관 중인 구매자 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🚚 배송완료 리스트 -->
+  <div id="inner-shipped" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>🚚 배송완료</h3>
+        <div style="font-size:13px;color:var(--muted);">배송완료 처리된 구매자</div>
+      </div>
+      <div class="tbl-wrap">
+        <table style="table-layout:auto;">
+          <thead><tr>
+            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th>결제방법</th><th>확인일시</th><th style="width:160px;text-align:center;">처리</th>
+          </tr></thead>
+          <tbody id="shippedConfirmedTbody">
+            <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">배송완료된 구매자 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 📋 전체 주문자 리스트 -->
+  <div id="inner-all" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>📋 전체 주문자</h3>
+        <div style="font-size:13px;color:var(--muted);">지금까지 주문한 모든 구매자 (대기·입금·보관·배송완료 포함)</div>
+      </div>
+      <div class="tbl-wrap">
+        <table style="table-layout:auto;">
+          <thead><tr>
+            <th>구매자 닉네임</th><th>상품 목록</th><th>합계 금액</th><th style="width:130px;">상태</th>
+          </tr></thead>
+          <tbody id="allOrdersTbody">
+            <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px;">로딩 중...</td></tr>
           </tbody>
         </table>
       </div>
@@ -1171,7 +1217,7 @@ async function loadAutoPage() {
     renderPending(pending);
     renderConfirmed(confirmed);
     renderCandidates(candidates);
-    document.getElementById('auto-total').textContent = pending.length + confirmed.length;
+    renderAllOrders(pending, confirmed);
     document.getElementById('auto-pending').textContent = pending.length;
     // auto-confirmed / auto-stored 는 renderConfirmed에서 분할 계산
     document.getElementById('auto-candidates').textContent = candidates.length;
@@ -1282,6 +1328,48 @@ function renderPending(items) {
 }
 
 let _storedMap = {};  // {"sid:buyer": status} — v23
+function renderAllOrders(pending, confirmed) {
+  const tb = document.getElementById('allOrdersTbody');
+  if (!tb) return;
+  const merged = {};
+  const add = (i, kind) => {
+    const key = i.session_id + ':' + i.buyer_name;
+    if (!merged[key]) merged[key] = {buyer_name:i.buyer_name, session_id:i.session_id, live_date:i.live_date, items:[], total:0, pending:false, confirmed:false};
+    const m = merged[key];
+    if (i.items) m.items.push(i.items);
+    m.total += Number(i.total_amount||0);
+    if (kind === 'pending') m.pending = true; else m.confirmed = true;
+  };
+  (pending||[]).forEach(i => add(i,'pending'));
+  (confirmed||[]).forEach(i => add(i,'confirmed'));
+  const list = Object.values(merged);
+  const totEl = document.getElementById('auto-total'); if (totEl) totEl.textContent = list.length;
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px;">주문자 없음</td></tr>'; return; }
+  list.sort((a,b) => (a.buyer_name||'').localeCompare(b.buyer_name||''));
+  const stat = (m) => {
+    const st = _storedMap[`${m.session_id}:${m.buyer_name}`];
+    if (m.pending && m.confirmed) return '<span style="color:var(--yellow);">일부 입금</span>';
+    if (m.pending) return '<span style="color:var(--yellow);">⏳ 미확인 대기</span>';
+    if (st === 'shipped') return '<span style="color:#16a34a;">🚚 배송완료</span>';
+    if (st === 'stored') return '<span style="color:#f59e0b;">📦 보관중</span>';
+    if (m.confirmed) return '<span style="color:var(--green);">✅ 입금확인</span>';
+    return '-';
+  };
+  const totalAmt = list.reduce((s,m) => s + m.total, 0);
+  tb.innerHTML = list.map(m => `
+      <tr>
+        <td><strong>${m.buyer_name}</strong><br><span style="font-size:11px;color:var(--muted);">📅 ${m.live_date||'-'}</span></td>
+        <td style="font-size:12px;color:var(--muted);max-width:340px;white-space:normal;word-break:break-all;">${(m.items.join(' / '))||'-'}</td>
+        <td style="font-family:'DM Mono',monospace;color:var(--green);">${m.total.toLocaleString()}원</td>
+        <td style="font-size:13px;">${stat(m)}</td>
+      </tr>`).join('') +
+    `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+        <td style="text-align:right;font-weight:600;padding:10px 12px;">총 합계 (${list.length}명)</td>
+        <td></td>
+        <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+        <td></td>
+      </tr>`;
+}
 function renderConfirmed(items) {
   const tbody = document.getElementById('confirmedTbody');
   const storedTbody = document.getElementById('storedConfirmedTbody');
@@ -1299,15 +1387,23 @@ function renderConfirmed(items) {
   else { storedBadge.classList.remove('show'); storedBadge.textContent = ''; }
 
   const payLabel = {card:'카드결제', transfer:'계좌이체', manual:'수동확인', '':'-'};
-  const fmt = (i, withStoreBtn) => {
+  const fmt = (i, mode) => {
     const safeBuyer = (i.buyer_name||'').replace(/['"\\]/g, '');
-    const btn = withStoreBtn
-      ? `<div style="display:inline-flex;gap:6px;justify-content:center;">
+    let btn;
+    if (mode === 'stored') {
+      btn = `<button class="btn" style="padding:4px 10px;background:#6b7280;color:#fff;" onclick="unstoreConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="보관 해제 → 입금확인 탭으로 복귀">↩️ 복귀</button>`;
+    } else if (mode === 'shipped') {
+      btn = `<div style="display:inline-flex;gap:6px;justify-content:center;">
+           <button class="btn" style="padding:4px 10px;background:#6b7280;color:#fff;" onclick="unstoreConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="배송완료 취소 → 입금확인으로 복귀">↩️ 되돌리기</button>
+           <button class="btn" style="padding:4px 10px;background:#b91c1c;color:#fff;" onclick="deleteConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="이 주문 완전 삭제">🗑 삭제</button>
+         </div>`;
+    } else {
+      btn = `<div style="display:inline-flex;gap:6px;justify-content:center;">
            <button class="btn" style="padding:4px 10px;background:#f59e0b;color:#fff;" onclick="storeConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="식물 보관으로 이동">📦 보관</button>
            <button class="btn" style="padding:4px 10px;background:#16a34a;color:#fff;" onclick="shipConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="배송 완료 → 목록에서 제외">🚚 배송완료</button>
            <button class="btn" style="padding:4px 10px;background:#b91c1c;color:#fff;" onclick="deleteConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="이 주문 완전 삭제">🗑 삭제</button>
-         </div>`
-      : `<button class="btn" style="padding:4px 10px;background:#6b7280;color:#fff;" onclick="unstoreConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="보관 해제 → 입금확인 탭으로 복귀">↩️ 복귀</button>`;
+         </div>`;
+    }
     return `
       <tr>
         <td><strong>${i.buyer_name}</strong><br><span style="font-size:11px;color:var(--muted);">📅 ${i.live_date||'-'}</span></td>
@@ -1323,7 +1419,7 @@ function renderConfirmed(items) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">입금확인된 주문 없음</td></tr>';
   } else {
     const totalAmt = normal.reduce((s, i) => s + Number(i.total_amount), 0);
-    tbody.innerHTML = normal.map(i => fmt(i, true)).join('') +
+    tbody.innerHTML = normal.map(i => fmt(i, 'normal')).join('') +
       `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
         <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
         <td style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green);padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
@@ -1336,10 +1432,29 @@ function renderConfirmed(items) {
       storedTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">보관 중인 구매자 없음</td></tr>';
     } else {
       const totalAmt = stored.reduce((s, i) => s + Number(i.total_amount), 0);
-      storedTbody.innerHTML = stored.map(i => fmt(i, false)).join('') +
+      storedTbody.innerHTML = stored.map(i => fmt(i, 'stored')).join('') +
         `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
           <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
           <td style="font-family:'DM Mono',monospace;font-weight:700;color:#f59e0b;padding:10px 12px;">${totalAmt.toLocaleString()}원</td>
+          <td colspan="3"></td>
+        </tr>`;
+    }
+  }
+
+  // 🚚 배송완료 목록
+  const shipped = items.filter(isShipped);
+  const shippedTbody = document.getElementById('shippedConfirmedTbody');
+  const shBadge = document.getElementById('shipped-count-badge');
+  if (shBadge) { if (shipped.length) { shBadge.textContent = shipped.length; shBadge.classList.add('show'); } else { shBadge.classList.remove('show'); shBadge.textContent=''; } }
+  if (shippedTbody) {
+    if (!shipped.length) {
+      shippedTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">배송완료된 구매자 없음</td></tr>';
+    } else {
+      const t = shipped.reduce((s, i) => s + Number(i.total_amount), 0);
+      shippedTbody.innerHTML = shipped.map(i => fmt(i, 'shipped')).join('') +
+        `<tr style="border-top:2px solid var(--border);background:var(--surface2);">
+          <td colspan="2" style="text-align:right;font-weight:600;padding:10px 12px;">총 합계</td>
+          <td style="font-family:'DM Mono',monospace;font-weight:700;color:#16a34a;padding:10px 12px;">${t.toLocaleString()}원</td>
           <td colspan="3"></td>
         </tr>`;
     }
@@ -1529,6 +1644,8 @@ function switchInnerTab(tab) {
     candidates: { id: 'inner-candidates', tabId: 'tab-candidates', color: '#f59e0b' },
     confirmed:  { id: 'inner-confirmed',  tabId: 'tab-confirmed',  color: 'var(--green)' },
     stored:     { id: 'inner-stored',     tabId: 'tab-stored',     color: '#f59e0b' },
+    shipped:    { id: 'inner-shipped',    tabId: 'tab-shipped',    color: 'var(--green)' },
+    all:        { id: 'inner-all',        tabId: 'tab-all',        color: 'var(--blue)' },
   };
   Object.entries(states).forEach(([key, s]) => {
     const active = (key === tab);
