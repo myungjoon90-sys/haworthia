@@ -1920,10 +1920,24 @@ def get_check_logs():
     days = []
     for i in range(7):
         d = start + timedelta(days=i)
-        log = conn.execute(
-            'SELECT * FROM check_logs WHERE session_id=? AND check_date=? ORDER BY id DESC LIMIT 1',
+        rows_day = conn.execute(
+            'SELECT * FROM check_logs WHERE session_id=? AND check_date=? ORDER BY id ASC',
             (session['id'], str(d))
-        ).fetchone()
+        ).fetchall()
+        log = None
+        if rows_day:
+            total_cf = sum((r['imweb_confirmed'] or 0) + (r['sms_confirmed'] or 0) for r in rows_day)
+            last = rows_day[-1]
+            err = next((r['error_message'] for r in rows_day if r['error_message']), None)
+            log = {
+                'imweb_confirmed': total_cf,   # 그날 누적 합계
+                'sms_confirmed': 0,
+                'check_time': last['check_time'],
+                'imweb_status': 'error' if any(r['imweb_status'] == 'error' for r in rows_day) else (last['imweb_status'] or 'success'),
+                'sms_status': 'error' if any(r['sms_status'] == 'error' for r in rows_day) else (last['sms_status'] or 'success'),
+                'error_message': err,
+                'runs': len(rows_day),
+            }
         today = now_kst().date()
         if d < today:
             day_status = 'done' if log else 'missed'
@@ -1935,7 +1949,7 @@ def get_check_logs():
         days.append({
             'date': str(d),
             'day_status': day_status,
-            'log': dict(log) if log else None
+            'log': log
         })
 
     conn.close()

@@ -1243,7 +1243,7 @@ function renderTimelineDays(row, days, logMap) {
       const hasErr = log.imweb_status==='error'||log.sms_status==='error';
       const t = (log.imweb_confirmed||0)+(log.sms_confirmed||0);
       if (hasErr) { dotClass='done-err'; emoji='🔴'; label=`오류\n${(log.check_time||'').slice(0,5)}`; labelClass='err'; }
-      else { dotClass='done-ok'; emoji='🟢'; label=`완료 ${t}건\n${(log.check_time||'').slice(0,5)}`; labelClass='ok'; }
+      else { dotClass='done-ok'; emoji='🟢'; label=`완료 총 ${t}건\n${(log.check_time||'').slice(0,5)}`; labelClass='ok'; }
     } else if (status === 'today') {
       dotClass='today'; emoji='🔵'; label='오늘\n대기중'; labelClass='today';
     } else {
