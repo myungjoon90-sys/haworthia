@@ -2275,12 +2275,15 @@ function renderShiraFee() {
   if (!tb) return;
   const fmt = (n) => Number(n||0).toLocaleString();
   const MF = "font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;";
-  // 판매 체크된 것만 (죽음·마감 제외) — 검색어도 반영
   const q = (document.getElementById('shiraSearch')||{value:''}).value.trim().toLowerCase();
-  const list = _shiraAll.filter(x => x.sold && !x.dead && !x.closed && (!q || (x.item_no||'').toLowerCase().includes(q)));
-  // 합계: 아직 정산 안 한 판매분 기준
+  const match = (x) => (!q || (x.item_no||'').toLowerCase().includes(q));
+  // 판매분 = 정산 전(active) + 정산완료 과거내역(past, 회색)
+  const active = _shiraAll.filter(x => x.sold && !x.dead && !x.closed && match(x));
+  const past   = _shiraAll.filter(x => x.sold && !x.dead && x.closed && match(x))
+                          .sort((a,b)=>String(b.closed_date||'').localeCompare(String(a.closed_date||'')));
+  // 상단 합계: 아직 정산 안 한 판매분 기준
   let feeKrw=0, feeTwd=0, supKrw=0;
-  _shiraAll.filter(x => x.sold && !x.dead && !x.closed).forEach(x => {
+  active.forEach(x => {
     feeKrw += Math.round((x.krw||0)*x.rate/100);
     feeTwd += Math.round((x.twd||0)*x.rate/100);
     supKrw += (x.krw||0) - Math.round((x.krw||0)*x.rate/100);
@@ -2288,13 +2291,16 @@ function renderShiraFee() {
   document.getElementById('shira-fee-krw').textContent = fmt(feeKrw);
   document.getElementById('shira-fee-twd').textContent = fmt(feeTwd);
   document.getElementById('shira-supplier-krw').textContent = fmt(supKrw);
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;'+MF+'">판매 체크된 상품이 없습니다 / No items checked as Sold</td></tr>'; return; }
-  tb.innerHTML = list.map(x => {
+
+  if (!active.length && !past.length) {
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;'+MF+'">판매 체크된 상품이 없습니다 / No items checked as Sold</td></tr>';
+    return;
+  }
+  const rowActive = (x) => {
     const fee = Math.round((x.krw||0)*x.rate/100);
     const sup = (x.krw||0) - fee;
-    const grey = '';
     return `
-      <tr style="${grey}${MF}">
+      <tr style="${MF}">
         <td style="padding:4px;"><img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'"></td>
         <td style="${MF}">${x.item_no}</td>
         <td style="text-align:center;">${x.sold ? '<span style="color:var(--green)">✅</span>' : '<span style="color:var(--muted)">–</span>'}</td>
@@ -2309,7 +2315,29 @@ function renderShiraFee() {
         <td style="text-align:right;${MF}color:var(--green);font-weight:700;">${fmt(fee)}</td>
         <td style="text-align:right;${MF}color:#f59e0b;">${fmt(sup)}</td>
       </tr>`;
-  }).join('');
+  };
+  const rowPast = (x) => {
+    const fee = Math.round((x.krw||0)*x.rate/100);
+    const sup = (x.krw||0) - fee;
+    return `
+      <tr style="${MF}opacity:0.5;background:rgba(255,255,255,0.02);">
+        <td style="padding:4px;"><img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:4px;filter:grayscale(1);" onerror="this.style.display='none'"></td>
+        <td style="${MF}">${x.item_no}<br><span style="color:#f59e0b;font-size:11px;">(${x.closed_date||''} 정산완료 / Settled)</span></td>
+        <td style="text-align:center;">✅</td>
+        <td style="text-align:right;${MF}">${fmt(x.twd)}</td>
+        <td style="text-align:right;${MF}">${fmt(x.krw)}</td>
+        <td style="text-align:center;${MF}">${x.rate}%</td>
+        <td style="text-align:right;${MF}font-weight:700;">${fmt(fee)}</td>
+        <td style="text-align:right;${MF}">${fmt(sup)}</td>
+      </tr>`;
+  };
+  let html = active.map(rowActive).join('');
+  if (past.length) {
+    let pFee=0; past.forEach(x => pFee += Math.round((x.krw||0)*x.rate/100));
+    html += `<tr><td colspan="8" style="${MF}background:rgba(255,255,255,0.04);color:var(--muted);font-weight:700;padding:8px 6px;border-top:2px solid var(--border);">📅 과거 정산내역 / Settled history · ${past.length}건 · 수수료 합계 ${fmt(pFee)} KRW</td></tr>`;
+    html += past.map(rowPast).join('');
+  }
+  tb.innerHTML = html;
 }
 async function shiraToggle(item_no, field, value) {
   const v = (field === 'rate') ? parseInt(value) : (value ? 1 : 0);
