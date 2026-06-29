@@ -7,6 +7,7 @@ from io import BytesIO
 from datetime import datetime, timedelta
 import logging
 import os
+import sqlite3
 import socket
 import re
 
@@ -2799,10 +2800,11 @@ def _ensure_shira_table(conn):
         settled INTEGER DEFAULT 0,
         dead INTEGER DEFAULT 0,
         closed INTEGER DEFAULT 0,
+        closed_date TEXT,
         rate INTEGER DEFAULT 36,
-        photo TEXT, created_at TEXT
+        photo TEXT, img BLOB, created_at TEXT
     )""")
-    for ddl in ('dead INTEGER DEFAULT 0', 'closed INTEGER DEFAULT 0'):
+    for ddl in ('dead INTEGER DEFAULT 0', 'closed INTEGER DEFAULT 0', 'closed_date TEXT', 'img BLOB'):
         try:
             conn.execute("ALTER TABLE shira_items ADD COLUMN %s" % ddl)
         except Exception:
@@ -2884,16 +2886,22 @@ def shira_upload():
     _ensure_shira_table(conn)
     added = 0
     for it in items:
-        if it['no'] in photos:
+        blob = photos.get(it['no'])
+        if blob:
             try:
-                open(os.path.join(d, it['no'] + '.jpg'), 'wb').write(photos[it['no']])
+                open(os.path.join(d, it['no'] + '.jpg'), 'wb').write(blob)
             except Exception:
                 pass
         r = conn.execute(
-            "INSERT OR IGNORE INTO shira_items (item_no,month,num,twd,krw,sold,settled,rate,photo,created_at) "
-            "VALUES (?,?,?,?,?,0,0,36,?,?)",
-            (it['no'], it['month'], it['num'], it['twd'], it['krw'], it['no'] + '.jpg', now_kst().isoformat()))
+            "INSERT OR IGNORE INTO shira_items (item_no,month,num,twd,krw,sold,settled,rate,photo,img,created_at) "
+            "VALUES (?,?,?,?,?,0,0,36,?,?,?)",
+            (it['no'], it['month'], it['num'], it['twd'], it['krw'], it['no'] + '.jpg',
+             (sqlite3.Binary(blob) if blob else None), now_kst().isoformat()))
         added += r.rowcount
+        # 기존 행이라도 사진이 비어있으면 채워줌(재업로드로 사진 복구)
+        if blob:
+            conn.execute("UPDATE shira_items SET img=?, photo=? WHERE item_no=? AND (img IS NULL OR LENGTH(img)=0)",
+                         (sqlite3.Binary(blob), it['no'] + '.jpg', it['no']))
     conn.commit()
     total = conn.execute("SELECT COUNT(*) AS c FROM shira_items").fetchone()['c']
     conn.close()
@@ -2907,7 +2915,7 @@ def shira_list():
     _ensure_shira_table(conn)
     rows = conn.execute(
         "SELECT item_no, month, num, twd, krw, sold, settled, "
-        "COALESCE(dead,0) AS dead, COALESCE(closed,0) AS closed, rate, photo "
+        "COALESCE(dead,0) AS dead, COALESCE(closed,0) AS closed, closed_date, rate, photo "
         "FROM shira_items ORDER BY month, num"
     ).fetchall()
     conn.close()
@@ -2916,10 +2924,17 @@ def shira_list():
 
 @app.route('/api/shira/photo/<path:item_no>', methods=['GET'])
 def shira_photo(item_no):
+    import io as _io
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    row = conn.execute("SELECT img FROM shira_items WHERE item_no=?", (item_no,)).fetchone()
+    conn.close()
+    if row is not None and row['img']:
+        return send_file(_io.BytesIO(row['img']), mimetype='image/jpeg')
     p = os.path.join(_shira_dir(), item_no + '.jpg')
-    if not os.path.exists(p):
-        return ('', 404)
-    return send_file(p, mimetype='image/jpeg')
+    if os.path.exists(p):
+        return send_file(p, mimetype='image/jpeg')
+    return ('', 404)
 
 
 @app.route('/api/shira/update', methods=['POST'])
@@ -2982,15 +2997,18 @@ def shira_delete_month():
 @app.route('/api/shira/close-month', methods=['POST'])
 def shira_close_month():
     """'월 마감': 현재 정산완료(settled) 상품을 closed 처리 → 이후 미정산 합계에서 제외."""
+    today = now_kst().strftime('%Y-%m-%d')
     conn = get_conn()
     _ensure_shira_table(conn)
     n = conn.execute(
-        "UPDATE shira_items SET closed=1 WHERE settled=1 AND COALESCE(closed,0)=0"
+        "UPDATE shira_items SET closed=1, settled=1, closed_date=? "
+        "WHERE sold=1 AND COALESCE(dead,0)=0 AND COALESCE(closed,0)=0",
+        (today,)
     ).rowcount
     conn.commit()
     conn.close()
-    logger.info("🛍 Shira 월마감: %d건 closed" % n)
-    return jsonify({'ok': True, 'closed': n})
+    logger.info("🛍 Shira 월마감: %d건 정산완료(%s)" % (n, today))
+    return jsonify({'ok': True, 'closed': n, 'date': today})
 
 
 @app.route('/api/shira/add-manual', methods=['POST'])
@@ -3024,9 +3042,10 @@ def shira_add_manual():
         conn.close()
         return jsonify({'error': '사진 저장 실패: %s' % e}), 400
     conn.execute(
-        "INSERT INTO shira_items (item_no,month,num,twd,krw,sold,settled,dead,closed,rate,photo,created_at) "
-        "VALUES (?,?,?,?,?,0,0,0,0,36,?,?)",
-        (item_no, '수기', num, twd, krw, item_no + '.jpg', now_kst().isoformat()))
+        "INSERT INTO shira_items (item_no,month,num,twd,krw,sold,settled,dead,closed,rate,photo,img,created_at) "
+        "VALUES (?,?,?,?,?,0,0,0,0,36,?,?,?)",
+        (item_no, '수기', num, twd, krw, item_no + '.jpg',
+         (sqlite3.Binary(data) if data else None), now_kst().isoformat()))
     conn.commit()
     total = conn.execute("SELECT COUNT(*) AS c FROM shira_items").fetchone()['c']
     conn.close()
