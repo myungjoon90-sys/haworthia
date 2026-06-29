@@ -834,10 +834,9 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
     </div>
     <p style="font-size:13px;color:var(--muted);margin:0 16px 6px;">💡 매달 PDF를 올리면 상품이 <b>누적</b>됩니다. 팔리면 <b>판매</b> 체크 → 합계 자동 합산, 정산 끝나면 <b>정산완료</b> 체크 → 회색 처리됩니다.</p>
     <div style="padding:0 16px 12px;display:flex;gap:20px;flex-wrap:wrap;font-size:14px;">
-      <span>판매 <strong id="shira-sold-count" style="color:var(--green)">0</strong>건</span>
-      <span>판매합계 <strong id="shira-sold-twd" style="color:var(--green)">0</strong> TWD</span>
-      <span><strong id="shira-sold-krw" style="color:var(--green)">0</strong> 원</span>
+      <span>판매(미정산) <strong id="shira-sold-count" style="color:var(--green)">0</strong>건 · <strong id="shira-sold-twd" style="color:var(--green)">0</strong> TWD · <strong id="shira-sold-krw" style="color:var(--green)">0</strong> won</span>
       <span style="color:var(--muted)">전체 <strong id="shira-total-count">0</strong>건</span>
+      <span style="width:100%;border-top:1px dashed var(--border);margin-top:6px;padding-top:6px;">✅ 현재까지 정산완료 금액 — <strong id="shira-settled-count" style="color:#9aa7b4">0</strong>건 · <strong id="shira-settled-twd" style="color:#f59e0b">0</strong> TWD · <strong id="shira-settled-krw" style="color:#f59e0b">0</strong> won</span>
     </div>
   </div>
 
@@ -847,6 +846,9 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   </div>
 
   <div id="shira-list-sec">
+    <div id="shiraZoom" onclick="shiraHoverEnd()" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;cursor:zoom-out;">
+      <img id="shiraZoomImg" style="max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+    </div>
     <div id="shiraGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;">
       <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">PDF를 업로드하세요</div>
     </div>
@@ -2097,6 +2099,18 @@ async function loadConsign() {
 const SHIRA_PW = 'shira';   // Shira 탭 전용 비밀번호 (시라토리용)
 let _shiraAll = [];
 let _shiraTab = 'list';
+let _shiraHoverTimer = null;
+function shiraHoverStart(imgEl) {
+  clearTimeout(_shiraHoverTimer);
+  _shiraHoverTimer = setTimeout(() => {
+    const z = document.getElementById('shiraZoom'), zi = document.getElementById('shiraZoomImg');
+    if (z && zi) { zi.src = imgEl.src; z.style.display = 'flex'; }
+  }, 2000);
+}
+function shiraHoverEnd() {
+  clearTimeout(_shiraHoverTimer);
+  const z = document.getElementById('shiraZoom'); if (z) z.style.display = 'none';
+}
 
 async function loadShira() {
   const grid = document.getElementById('shiraGrid');
@@ -2130,36 +2144,57 @@ function renderShira() {
   const grid = document.getElementById('shiraGrid');
   if (!grid) return;
   const fmt = (n) => Number(n||0).toLocaleString();
-  // 합계 (판매 체크된 것)
-  const sold = _shiraAll.filter(x => x.sold);
-  document.getElementById('shira-sold-count').textContent = sold.length;
-  document.getElementById('shira-sold-twd').textContent = fmt(sold.reduce((s,x)=>s+(x.twd||0),0));
-  document.getElementById('shira-sold-krw').textContent = fmt(sold.reduce((s,x)=>s+(x.krw||0),0));
+  const PF = "font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;";
+  // 합계: 판매(정산완료 제외) + 정산완료 누적
+  const soldActive = _shiraAll.filter(x => x.sold && !x.settled);
+  const settledList = _shiraAll.filter(x => x.settled);
+  document.getElementById('shira-sold-count').textContent = soldActive.length;
+  document.getElementById('shira-sold-twd').textContent = fmt(soldActive.reduce((s,x)=>s+(x.twd||0),0));
+  document.getElementById('shira-sold-krw').textContent = fmt(soldActive.reduce((s,x)=>s+(x.krw||0),0));
+  document.getElementById('shira-settled-count').textContent = settledList.length;
+  document.getElementById('shira-settled-twd').textContent = fmt(settledList.reduce((s,x)=>s+(x.twd||0),0));
+  document.getElementById('shira-settled-krw').textContent = fmt(settledList.reduce((s,x)=>s+(x.krw||0),0));
   document.getElementById('shira-total-count').textContent = _shiraAll.length;
 
   const list = _shiraFiltered();
   if (!list.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">상품 없음 — PDF를 업로드하세요</div>'; return; }
-  grid.innerHTML = list.map(x => {
-    const settled = x.settled ? ' shira-settled' : '';
-    const soldChk = x.sold ? 'checked' : '';
-    const setChk = x.settled ? 'checked' : '';
-    return `
+  // 월별 그룹 (업로드한 PDF별)
+  const groups = {};
+  for (const x of list) { (groups[x.month] = groups[x.month] || []).push(x); }
+  const months = Object.keys(groups).sort();
+  const monthLabel = (m) => (m && m.length === 4) ? ('20' + m.slice(0,2) + '-' + m.slice(2)) : m;
+  let html = '';
+  for (const m of months) {
+    const g = groups[m];
+    html += `<div style="grid-column:1/-1;margin:8px 0 2px;font-weight:700;font-size:15px;border-bottom:2px solid var(--green);padding-bottom:4px;">📅 ${monthLabel(m)} <span style="color:var(--muted);font-weight:400;font-size:12px;">· ${g.length}건 (${m})</span></div>`;
+    html += g.map(x => {
+      const settled = x.settled ? ' shira-settled' : '';
+      const soldChk = x.sold ? 'checked' : '';
+      const setChk = x.settled ? 'checked' : '';
+      const url = `${API}/api/shira/photo/${encodeURIComponent(x.item_no)}`;
+      return `
       <div class="shira-card${settled}" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
         <div style="position:relative;background:#000;">
-          <img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;" onerror="this.style.display='none'">
+          <img src="${url}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;cursor:pointer;"
+               title="클릭: 판매 체크 · 2초 올려두면 크게 보기"
+               onclick="shiraToggle('${x.item_no}','sold',${x.sold ? 'false' : 'true'})"
+               onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()"
+               onerror="this.style.display='none'">
           <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
           ${x.sold ? '<span style="position:absolute;top:6px;right:6px;background:#16a34a;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">판매됨</span>' : ''}
         </div>
         <div style="padding:8px 10px;">
-          <div style="font-family:'DM Mono',monospace;font-size:13px;">${fmt(x.twd)} TWD</div>
-          <div style="font-family:'DM Mono',monospace;font-size:14px;color:var(--green);font-weight:700;">${fmt(x.krw)} 원</div>
+          <div style="${PF}font-size:13px;">${fmt(x.twd)} TWD</div>
+          <div style="${PF}font-size:15px;color:var(--green);font-weight:700;">${fmt(x.krw)} won</div>
           <div style="display:flex;gap:12px;margin-top:6px;font-size:13px;">
             <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;"><input type="checkbox" ${soldChk} onchange="shiraToggle('${x.item_no}','sold',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"> 판매</label>
             <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;color:var(--muted);"><input type="checkbox" ${setChk} onchange="shiraToggle('${x.item_no}','settled',this.checked)" style="width:15px;height:15px;cursor:pointer;"> 정산완료</label>
           </div>
         </div>
       </div>`;
-  }).join('');
+    }).join('');
+  }
+  grid.innerHTML = html;
 }
 
 function renderShiraFee() {
@@ -2169,7 +2204,7 @@ function renderShiraFee() {
   const list = _shiraFiltered();
   // 합계는 '판매'된 상품 기준
   let feeKrw=0, feeTwd=0, supKrw=0;
-  _shiraAll.filter(x=>x.sold).forEach(x => {
+  _shiraAll.filter(x=>x.sold && !x.settled).forEach(x => {
     feeKrw += Math.round((x.krw||0)*x.rate/100);
     feeTwd += Math.round((x.twd||0)*x.rate/100);
     supKrw += (x.krw||0) - Math.round((x.krw||0)*x.rate/100);
