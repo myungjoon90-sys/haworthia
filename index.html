@@ -40,6 +40,7 @@
 /* 합계 행: 글씨 키우고 높이 1.5배 */
 .consign-card tfoot td { font-size: 19px; padding: 14px 10px; }
 .consign-card { width: fit-content; max-width: 100%; }
+.shira-card.shira-settled { filter: grayscale(1); opacity: 0.5; }
 .consign-card.settled .tbl-wrap, .consign-card.settled .card-head h3 { filter: grayscale(1); opacity: 0.5; }
 /* 위탁정산 페이지일 때 본문 폭 확장 */
 body.page-consign-active .container { max-width: 1500px; }
@@ -441,7 +442,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
 <!-- Header -->
 <header>
   <div class="logo">🌿</div>
-  <h1>지양하월시아 입금확인</h1>
+  <h1>지양하월시아 입금확인 <span style="font-size:12px;color:#7ee2a8;font-weight:600;border:1px solid #2e6b46;border-radius:4px;padding:1px 6px;">Shira판</span></h1>
   <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     <button class="btn" style="background:#2563eb;color:#fff;padding:6px 12px;" onclick="backupAll()" title="모든 데이터(세션/거래명세서/회원/판매품/구매이력/위탁/매핑/은행)를 파일 하나로 백업">💾 전체 백업</button>
     <input type="file" id="restoreFileInput" accept=".db,.sqlite,.sqlite3" style="display:none;" onchange="restoreAll(this.files)">
@@ -473,6 +474,9 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="nav-item" onclick="showPage('consign')" id="nav-consign">
     💰 위탁판매 정산
     <span class="nav-badge" id="badge-consign"></span>
+  </div>
+  <div class="nav-item" onclick="showPage('shira')" id="nav-shira">
+    🛍 Shira
   </div>
   <div class="nav-item" onclick="showPage('mapping')" id="nav-mapping">
     🔗 닉네임 매핑
@@ -817,6 +821,63 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   </div>
 </div>
 
+<div class="page" id="page-shira">
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-head">
+      <h3>🛍 Shira <span style="font-weight:400;font-size:13px;color:var(--muted);">시라토리 위탁 상품</span></h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="shiraSearch" oninput="renderShira()" placeholder="🔍 번호 검색 (예: 2604-001)" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:200px;">
+        <input type="file" id="shiraPdfInput" accept=".pdf" style="display:none;" onchange="shiraUpload(this.files)">
+        <button class="btn btn-primary" id="shiraUploadBtn" onclick="document.getElementById('shiraPdfInput').click()" title="월별 상품 PDF 업로드(누적)">⬆ PDF 업로드</button>
+        <button class="btn btn-secondary" onclick="loadShira()">🔄 새로고침</button>
+      </div>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin:0 16px 6px;">💡 매달 PDF를 올리면 상품이 <b>누적</b>됩니다. 팔리면 <b>판매</b> 체크 → 합계 자동 합산, 정산 끝나면 <b>정산완료</b> 체크 → 회색 처리됩니다.</p>
+    <div style="padding:0 16px 12px;display:flex;gap:20px;flex-wrap:wrap;font-size:14px;">
+      <span>판매 <strong id="shira-sold-count" style="color:var(--green)">0</strong>건</span>
+      <span>판매합계 <strong id="shira-sold-twd" style="color:var(--green)">0</strong> TWD</span>
+      <span><strong id="shira-sold-krw" style="color:var(--green)">0</strong> 원</span>
+      <span style="color:var(--muted)">전체 <strong id="shira-total-count">0</strong>건</span>
+    </div>
+  </div>
+
+  <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;">
+    <div class="inner-tab active" id="stab-list" onclick="switchShiraTab('list')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid var(--green);color:var(--green);">🖼 상품 목록</div>
+    <div class="inner-tab" id="stab-fee" onclick="switchShiraTab('fee')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">💰 수수료 정산</div>
+  </div>
+
+  <div id="shira-list-sec">
+    <div id="shiraGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;">
+      <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">PDF를 업로드하세요</div>
+    </div>
+  </div>
+
+  <div id="shira-fee-sec" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>💰 수수료 정산</h3>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary" onclick="shiraSetAllRate(36)">모두 36%</button>
+          <button class="btn btn-secondary" onclick="shiraSetAllRate(50)">모두 50%</button>
+        </div>
+      </div>
+      <div style="padding:0 16px 10px;font-size:14px;">
+        판매분 수수료 합계 — <strong id="shira-fee-krw" style="color:var(--green)">0</strong> 원 (<strong id="shira-fee-twd">0</strong> TWD)
+        <span style="color:var(--muted)"> · 시라토리 몫 <strong id="shira-supplier-krw">0</strong> 원</span>
+      </div>
+      <div class="tbl-wrap">
+        <table style="table-layout:auto;width:100%;">
+          <thead><tr>
+            <th>사진</th><th>번호</th><th style="text-align:center;">판매</th><th style="text-align:right;">TWD</th><th style="text-align:right;">KRW</th>
+            <th style="text-align:center;">수수료율</th><th style="text-align:right;">수수료(KRW)</th><th style="text-align:right;">시라토리몫(KRW)</th>
+          </tr></thead>
+          <tbody id="shiraFeeTbody"><tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">상품 없음</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="page" id="page-members">
   <div class="card" style="margin-bottom:16px;">
     <div class="card-head">
@@ -1036,6 +1097,12 @@ function showPage(id) {
     if (pw !== '2015') { toast('비밀번호가 올바르지 않습니다', 'err'); return; }
     window._tabUnlocked = true;              // 한 번 입력하면 새로고침 전까지 유지
   }
+  if (id === 'shira' && !window._shiraUnlocked) {
+    const pw = prompt('🔒 Shira 비밀번호 (시라토리용)');
+    if (pw === null) return;
+    if (pw !== SHIRA_PW) { toast('비밀번호가 올바르지 않습니다', 'err'); return; }
+    window._shiraUnlocked = true;
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
@@ -1052,6 +1119,7 @@ function showPage(id) {
   if (id === 'catalog') { loadCatalog(); }
   if (id === 'history') { loadHistory(); }
   if (id === 'consign') { loadConsignSessions(); loadConsign(); }
+  if (id === 'shira') { loadShira(); }
   if (id === 'mapping')  loadMappings();
   if (id === 'guide')    { updateGuideBanner(document.getElementById('serverDot').classList.contains('on')); loadSmsLog(); }
 }
@@ -2022,6 +2090,152 @@ async function loadConsign() {
     container.innerHTML = '<div class="card"><div class="card-body" style="color:var(--red);">불러오기 실패: ' + e.message + '</div></div>';
   }
 }
+
+// ══════════════════════════════════════════════════════════════════
+//  🛍 Shira (시라토리 위탁 상품)
+// ══════════════════════════════════════════════════════════════════
+const SHIRA_PW = 'shira';   // Shira 탭 전용 비밀번호 (시라토리용)
+let _shiraAll = [];
+let _shiraTab = 'list';
+
+async function loadShira() {
+  const grid = document.getElementById('shiraGrid');
+  if (grid) grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">불러오는 중...</div>';
+  try {
+    const r = await fetch(API + '/api/shira/list');
+    _shiraAll = await r.json();
+    renderShira();
+    renderShiraFee();
+  } catch(e) { toast('Shira 목록 불러오기 실패', 'err'); }
+}
+
+function switchShiraTab(tab) {
+  _shiraTab = tab;
+  document.getElementById('shira-list-sec').style.display = (tab === 'list') ? 'block' : 'none';
+  document.getElementById('shira-fee-sec').style.display = (tab === 'fee') ? 'block' : 'none';
+  for (const [t, id] of [['list','stab-list'],['fee','stab-fee']]) {
+    const el = document.getElementById(id); const on = (t === tab);
+    el.style.cssText = `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid ${on?'var(--green)':'transparent'};color:${on?'var(--green)':'var(--muted)'};`;
+  }
+  if (tab === 'fee') renderShiraFee();
+}
+
+function _shiraFiltered() {
+  const q = (document.getElementById('shiraSearch')||{value:''}).value.trim().toLowerCase();
+  if (!q) return _shiraAll;
+  return _shiraAll.filter(x => (x.item_no||'').toLowerCase().includes(q));
+}
+
+function renderShira() {
+  const grid = document.getElementById('shiraGrid');
+  if (!grid) return;
+  const fmt = (n) => Number(n||0).toLocaleString();
+  // 합계 (판매 체크된 것)
+  const sold = _shiraAll.filter(x => x.sold);
+  document.getElementById('shira-sold-count').textContent = sold.length;
+  document.getElementById('shira-sold-twd').textContent = fmt(sold.reduce((s,x)=>s+(x.twd||0),0));
+  document.getElementById('shira-sold-krw').textContent = fmt(sold.reduce((s,x)=>s+(x.krw||0),0));
+  document.getElementById('shira-total-count').textContent = _shiraAll.length;
+
+  const list = _shiraFiltered();
+  if (!list.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">상품 없음 — PDF를 업로드하세요</div>'; return; }
+  grid.innerHTML = list.map(x => {
+    const settled = x.settled ? ' shira-settled' : '';
+    const soldChk = x.sold ? 'checked' : '';
+    const setChk = x.settled ? 'checked' : '';
+    return `
+      <div class="shira-card${settled}" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
+        <div style="position:relative;background:#000;">
+          <img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;" onerror="this.style.display='none'">
+          <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
+          ${x.sold ? '<span style="position:absolute;top:6px;right:6px;background:#16a34a;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">판매됨</span>' : ''}
+        </div>
+        <div style="padding:8px 10px;">
+          <div style="font-family:'DM Mono',monospace;font-size:13px;">${fmt(x.twd)} TWD</div>
+          <div style="font-family:'DM Mono',monospace;font-size:14px;color:var(--green);font-weight:700;">${fmt(x.krw)} 원</div>
+          <div style="display:flex;gap:12px;margin-top:6px;font-size:13px;">
+            <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;"><input type="checkbox" ${soldChk} onchange="shiraToggle('${x.item_no}','sold',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"> 판매</label>
+            <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;color:var(--muted);"><input type="checkbox" ${setChk} onchange="shiraToggle('${x.item_no}','settled',this.checked)" style="width:15px;height:15px;cursor:pointer;"> 정산완료</label>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderShiraFee() {
+  const tb = document.getElementById('shiraFeeTbody');
+  if (!tb) return;
+  const fmt = (n) => Number(n||0).toLocaleString();
+  const list = _shiraFiltered();
+  // 합계는 '판매'된 상품 기준
+  let feeKrw=0, feeTwd=0, supKrw=0;
+  _shiraAll.filter(x=>x.sold).forEach(x => {
+    feeKrw += Math.round((x.krw||0)*x.rate/100);
+    feeTwd += Math.round((x.twd||0)*x.rate/100);
+    supKrw += (x.krw||0) - Math.round((x.krw||0)*x.rate/100);
+  });
+  document.getElementById('shira-fee-krw').textContent = fmt(feeKrw);
+  document.getElementById('shira-fee-twd').textContent = fmt(feeTwd);
+  document.getElementById('shira-supplier-krw').textContent = fmt(supKrw);
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">상품 없음</td></tr>'; return; }
+  tb.innerHTML = list.map(x => {
+    const fee = Math.round((x.krw||0)*x.rate/100);
+    const sup = (x.krw||0) - fee;
+    const grey = x.settled ? 'opacity:0.45;' : '';
+    return `
+      <tr style="${grey}">
+        <td style="padding:4px;"><img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'"></td>
+        <td style="font-family:'DM Mono',monospace;">${x.item_no}</td>
+        <td style="text-align:center;">${x.sold ? '<span style="color:var(--green)">✅</span>' : '<span style="color:var(--muted)">–</span>'}</td>
+        <td style="text-align:right;font-family:'DM Mono',monospace;">${fmt(x.twd)}</td>
+        <td style="text-align:right;font-family:'DM Mono',monospace;">${fmt(x.krw)}</td>
+        <td style="text-align:center;">
+          <select onchange="shiraToggle('${x.item_no}','rate',this.value)" style="padding:3px 6px;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:5px;color:var(--text);">
+            <option value="36" ${x.rate==36?'selected':''}>36%</option>
+            <option value="50" ${x.rate==50?'selected':''}>50%</option>
+          </select>
+        </td>
+        <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--green);font-weight:700;">${fmt(fee)}</td>
+        <td style="text-align:right;font-family:'DM Mono',monospace;color:#f59e0b;">${fmt(sup)}</td>
+      </tr>`;
+  }).join('');
+}
+
+async function shiraToggle(item_no, field, value) {
+  const v = (field === 'rate') ? parseInt(value) : (value ? 1 : 0);
+  const it = _shiraAll.find(x => x.item_no === item_no);
+  if (it) it[field] = v;            // 즉시 로컬 반영
+  renderShira(); renderShiraFee();
+  try {
+    await fetch(API + '/api/shira/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({item_no, field, value: v})});
+  } catch(e) { toast('저장 실패(서버)', 'err'); }
+}
+
+async function shiraSetAllRate(rate) {
+  if (!confirm(`모든 상품의 수수료율을 ${rate}% 로 설정할까요?`)) return;
+  try {
+    const r = await fetch(API + '/api/shira/set-all-rate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({rate})});
+    const d = await r.json();
+    if (d.ok) { toast(`수수료율 모두 ${rate}%`, 'ok'); loadShira(); }
+    else toast('오류: ' + (d.error||''), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function shiraUpload(files) {
+  if (!files || !files.length) return;
+  const btn = document.getElementById('shiraUploadBtn');
+  const o = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 업로드 중...'; }
+  try {
+    const fd = new FormData(); fd.append('file', files[0]);
+    const r = await fetch(API + '/api/shira/upload', {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) { toast(`🛍 PDF 처리: 상품 ${d.parsed}개 중 신규 ${d.added}개 추가 (누적 ${d.total})`, 'ok'); loadShira(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+  finally { const fi = document.getElementById('shiraPdfInput'); if (fi) fi.value=''; if (btn) { btn.disabled=false; btn.innerHTML=o; } }
+}
+
 
 function renderConsignGroup(g, fmt) {
   const consignor = g.consignor || g.buyer || '(기타)';
