@@ -10,7 +10,7 @@ import os
 import socket
 import re
 
-from database import init_db, get_conn
+from database import init_db, get_conn, DB_PATH
 from imweb_api import get_paid_orders, extract_order_info, set_order_to_standby, get_order_products
 from sms_parser import parse_sms
 
@@ -2777,6 +2777,199 @@ def _ensure_scheduler():
         logger.error(f"스케줄러 시작 실패: {e}")
 
 # ── v25 변경: 세션삭제 API / 위탁정산 구매자별·위탁전체인식 / 정산엑셀 폼(제목·날짜·맑은고딕) ──
+
+# ══════════════════════════════════════════════════════════════════
+#  🛍 Shira — 대만 위탁 상품 (월별 PDF 누적, 판매/정산 체크, 수수료 정산)
+# ══════════════════════════════════════════════════════════════════
+def _shira_dir():
+    d = os.path.join(os.path.dirname(DB_PATH), 'shira_img')
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def _ensure_shira_table(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS shira_items (
+        item_no TEXT UNIQUE,
+        month TEXT, num INTEGER,
+        twd INTEGER, krw INTEGER,
+        sold INTEGER DEFAULT 0,
+        settled INTEGER DEFAULT 0,
+        rate INTEGER DEFAULT 36,
+        photo TEXT, created_at TEXT
+    )""")
+
+
+def _parse_shira_pdf(path):
+    """상품목록 PDF에서 (번호, TWD, KRW, 사진) 추출. 4열 격자 + 월prefix 자동감지."""
+    import pdfplumber
+    from collections import Counter
+    items = []
+    photos = {}
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            words = page.extract_words()
+            cnt = Counter(w['text'] for w in words if w['text'].isdigit() and len(w['text']) == 4)
+            if not cnt:
+                continue
+            prefix = cnt.most_common(1)[0][0]
+            base = [w for w in words if w['text'] == prefix]
+            if not base:
+                continue
+            cols = sorted(set(round(b['x0'] / 10) * 10 for b in base))
+            rows = sorted(set(round(b['top']) for b in base))
+
+            def nearest(v, refs):
+                return min(range(len(refs)), key=lambda i: abs(v - refs[i]))
+
+            cell = {}
+            for b in base:
+                top = b['top']
+                x0 = b['x0']
+                ci = nearest(round(x0 / 10) * 10, cols)
+                ri = nearest(round(top), rows)
+                sl = [w for w in words if abs(w['top'] - top) < 3 and w['x0'] > x0 + 3
+                      and w['text'].replace(',', '').isdigit() and w['text'] != prefix]
+                sl.sort(key=lambda w: w['x0'])
+                nums = [w['text'].replace(',', '') for w in sl][:2]
+                below = [w for w in words if x0 - 10 < w['x0'] < x0 + 45 and top + 3 < w['top'] < top + 34
+                         and w['text'].isdigit() and len(w['text']) <= 3]
+                below.sort(key=lambda w: w['top'])
+                if len(nums) < 2 or not below:
+                    continue
+                suf = int(below[0]['text'])
+                cell[(ci, ri)] = {'no': "%s-%03d" % (prefix, suf), 'month': prefix, 'num': suf,
+                                  'twd': int(nums[0]), 'krw': int(nums[1])}
+            img_refs = [c + 17 for c in cols]
+            for im in page.images:
+                ci = nearest(im['x0'], img_refs)
+                ri = nearest(round(im['top']), rows)
+                k = (ci, ri)
+                if k in cell and cell[k]['no'] not in photos:
+                    try:
+                        photos[cell[k]['no']] = im['stream'].get_data()
+                    except Exception:
+                        pass
+            items.extend(cell.values())
+    return items, photos
+
+
+@app.route('/api/shira/upload', methods=['POST'])
+def shira_upload():
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    import tempfile
+    f = request.files['file']
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    tmp.write(f.read())
+    tmp.close()
+    try:
+        items, photos = _parse_shira_pdf(tmp.name)
+    except Exception as e:
+        logger.exception("Shira PDF 파싱 실패")
+        return jsonify({'error': 'PDF 파싱 실패: %s' % e}), 400
+    if not items:
+        return jsonify({'error': '상품을 찾지 못했습니다 (PDF 양식 확인)'}), 400
+    d = _shira_dir()
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    added = 0
+    for it in items:
+        if it['no'] in photos:
+            try:
+                open(os.path.join(d, it['no'] + '.jpg'), 'wb').write(photos[it['no']])
+            except Exception:
+                pass
+        r = conn.execute(
+            "INSERT OR IGNORE INTO shira_items (item_no,month,num,twd,krw,sold,settled,rate,photo,created_at) "
+            "VALUES (?,?,?,?,?,0,0,36,?,?)",
+            (it['no'], it['month'], it['num'], it['twd'], it['krw'], it['no'] + '.jpg', now_kst().isoformat()))
+        added += r.rowcount
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) AS c FROM shira_items").fetchone()['c']
+    conn.close()
+    logger.info("🛍 Shira 업로드: 파싱 %d, 신규 %d, 누적 %d" % (len(items), added, total))
+    return jsonify({'ok': True, 'parsed': len(items), 'added': added, 'total': total})
+
+
+@app.route('/api/shira/list', methods=['GET'])
+def shira_list():
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    rows = conn.execute(
+        "SELECT item_no, month, num, twd, krw, sold, settled, rate, photo FROM shira_items ORDER BY month, num"
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/shira/photo/<path:item_no>', methods=['GET'])
+def shira_photo(item_no):
+    p = os.path.join(_shira_dir(), item_no + '.jpg')
+    if not os.path.exists(p):
+        return ('', 404)
+    return send_file(p, mimetype='image/jpeg')
+
+
+@app.route('/api/shira/update', methods=['POST'])
+def shira_update():
+    data = request.get_json(silent=True) or {}
+    ino = (data.get('item_no') or '').strip()
+    field = (data.get('field') or '').strip()
+    val = data.get('value')
+    if not ino or field not in ('sold', 'settled', 'rate'):
+        return jsonify({'error': '잘못된 요청'}), 400
+    if field == 'rate':
+        try:
+            val = int(val)
+        except Exception:
+            val = 36
+        if val not in (36, 50):
+            val = 36
+    else:
+        val = 1 if val else 0
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    conn.execute("UPDATE shira_items SET %s=? WHERE item_no=?" % field, (val, ino))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/shira/set-all-rate', methods=['POST'])
+def shira_set_all_rate():
+    data = request.get_json(silent=True) or {}
+    try:
+        rate = int(data.get('rate'))
+    except Exception:
+        rate = 36
+    if rate not in (36, 50):
+        return jsonify({'error': 'rate는 36 또는 50'}), 400
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    n = conn.execute("UPDATE shira_items SET rate=?", (rate,)).rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'updated': n, 'rate': rate})
+
+
+@app.route('/api/shira/delete-month', methods=['POST'])
+def shira_delete_month():
+    data = request.get_json(silent=True) or {}
+    month = (data.get('month') or '').strip()
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    if month:
+        n = conn.execute("DELETE FROM shira_items WHERE month=?", (month,)).rowcount
+    else:
+        n = conn.execute("DELETE FROM shira_items").rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'deleted': n})
+
+
 # DB 초기화 + 스케줄러 시작 (모듈 import 시점)
 init_db()
 _ensure_scheduler()
