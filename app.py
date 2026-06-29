@@ -2797,9 +2797,16 @@ def _ensure_shira_table(conn):
         twd INTEGER, krw INTEGER,
         sold INTEGER DEFAULT 0,
         settled INTEGER DEFAULT 0,
+        dead INTEGER DEFAULT 0,
+        closed INTEGER DEFAULT 0,
         rate INTEGER DEFAULT 36,
         photo TEXT, created_at TEXT
     )""")
+    for ddl in ('dead INTEGER DEFAULT 0', 'closed INTEGER DEFAULT 0'):
+        try:
+            conn.execute("ALTER TABLE shira_items ADD COLUMN %s" % ddl)
+        except Exception:
+            pass
 
 
 def _parse_shira_pdf(path):
@@ -2899,7 +2906,9 @@ def shira_list():
     conn = get_conn()
     _ensure_shira_table(conn)
     rows = conn.execute(
-        "SELECT item_no, month, num, twd, krw, sold, settled, rate, photo FROM shira_items ORDER BY month, num"
+        "SELECT item_no, month, num, twd, krw, sold, settled, "
+        "COALESCE(dead,0) AS dead, COALESCE(closed,0) AS closed, rate, photo "
+        "FROM shira_items ORDER BY month, num"
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
@@ -2919,7 +2928,7 @@ def shira_update():
     ino = (data.get('item_no') or '').strip()
     field = (data.get('field') or '').strip()
     val = data.get('value')
-    if not ino or field not in ('sold', 'settled', 'rate'):
+    if not ino or field not in ('sold', 'settled', 'dead', 'rate'):
         return jsonify({'error': '잘못된 요청'}), 400
     if field == 'rate':
         try:
@@ -2968,6 +2977,61 @@ def shira_delete_month():
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'deleted': n})
+
+
+@app.route('/api/shira/close-month', methods=['POST'])
+def shira_close_month():
+    """'월 마감': 현재 정산완료(settled) 상품을 closed 처리 → 이후 미정산 합계에서 제외."""
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    n = conn.execute(
+        "UPDATE shira_items SET closed=1 WHERE settled=1 AND COALESCE(closed,0)=0"
+    ).rowcount
+    conn.commit()
+    conn.close()
+    logger.info("🛍 Shira 월마감: %d건 closed" % n)
+    return jsonify({'ok': True, 'closed': n})
+
+
+@app.route('/api/shira/add-manual', methods=['POST'])
+def shira_add_manual():
+    """수기 등록: 사진 + TWD + KRW 직접 입력 (PDF 없이)."""
+    if 'file' not in request.files:
+        return jsonify({'error': '사진이 없습니다'}), 400
+    f = request.files['file']
+    try:
+        twd = int(float(request.form.get('twd') or 0))
+    except Exception:
+        twd = 0
+    try:
+        krw = int(float(request.form.get('krw') or 0))
+    except Exception:
+        krw = 0
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    row = conn.execute(
+        "SELECT COALESCE(MAX(num),0) AS m FROM shira_items WHERE month='수기'"
+    ).fetchone()
+    num = (row['m'] or 0) + 1
+    item_no = "수기-%03d" % num
+    d = _shira_dir()
+    try:
+        ext = os.path.splitext(f.filename or '')[1].lower()
+        data = f.read()
+        # jpg로 통일 저장 (확장자 무관)
+        open(os.path.join(d, item_no + '.jpg'), 'wb').write(data)
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': '사진 저장 실패: %s' % e}), 400
+    conn.execute(
+        "INSERT INTO shira_items (item_no,month,num,twd,krw,sold,settled,dead,closed,rate,photo,created_at) "
+        "VALUES (?,?,?,?,?,0,0,0,0,36,?,?)",
+        (item_no, '수기', num, twd, krw, item_no + '.jpg', now_kst().isoformat()))
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) AS c FROM shira_items").fetchone()['c']
+    conn.close()
+    logger.info("🛍 Shira 수기등록: %s (TWD %d / KRW %d)" % (item_no, twd, krw))
+    return jsonify({'ok': True, 'item_no': item_no, 'total': total})
 
 
 # DB 초기화 + 스케줄러 시작 (모듈 import 시점)
