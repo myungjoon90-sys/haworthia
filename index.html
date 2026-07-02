@@ -862,6 +862,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;">
     <div class="inner-tab active" id="stab-list" onclick="switchShiraTab('list')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid var(--green);color:var(--green);">🖼 상품 목록 (Items)</div>
     <div class="inner-tab" id="stab-fee" onclick="switchShiraTab('fee')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">💰 수수료 정산 (Commission)</div>
+    <div class="inner-tab" id="stab-hold" onclick="switchShiraTab('hold')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">📦 구매 후 보관 (Held)</div>
     <div class="inner-tab" id="stab-manual" onclick="switchShiraTab('manual')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">➕ 수기 추가 (Add manually)</div>
   </div>
 
@@ -881,6 +882,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <div id="shiraRateBtns" style="display:flex;gap:8px;">
           <button class="btn btn-secondary" onclick="shiraSetAllRate(36)">모두 36% (All 36%)</button>
           <button class="btn btn-secondary" onclick="shiraSetAllRate(50)">모두 50% (All 50%)</button>
+          <button class="btn" style="background:#7f1d1d;color:#fff;" onclick="shiraReopen('')" title="모든 정산완료를 취소하고 판매(미정산)로 되돌립니다">↩ 정산 전체 초기화 / Reset all</button>
         </div>
       </div>
       <div style="padding:0 16px 10px;font-size:14px;">
@@ -895,6 +897,19 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
           </tr></thead>
           <tbody id="shiraFeeTbody"><tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">상품 없음 / No items</td></tr></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="shira-hold-sec" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>📦 구매 후 보관 (Purchased &amp; held)</h3>
+        <span style="font-size:13px;color:var(--muted);">보관중 / Held <strong id="shira-hold-count" style="color:#a78bfa;">0</strong>건</span>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin:0 16px 8px;">입금(판매)됐지만 아직 배송하지 않고 보관중인 상품입니다. 상품 목록에서 <b>📦 보관</b>을 체크하면 여기로 옵니다. 구매자 이름은 아래 칸에 적으면 자동 저장됩니다.<br><span style="font-size:12px;">Items paid but held — check <b>📦 Hold</b> on a card to list it here. Type the buyer's name below (auto-saved).</span></p>
+      <div id="shiraHoldGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;padding:0 16px 16px;">
+        <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">보관중인 상품이 없습니다 / None held</div>
       </div>
     </div>
   </div>
@@ -2193,6 +2208,7 @@ async function loadShira() {
     _shiraAll = await r.json();
     renderShira();
     renderShiraFee();
+    renderShiraHold();
   } catch(e) { toast('Shira 목록 불러오기 실패', 'err'); }
 }
 
@@ -2201,11 +2217,13 @@ function switchShiraTab(tab) {
   document.getElementById('shira-list-sec').style.display = (tab === 'list') ? 'block' : 'none';
   document.getElementById('shira-fee-sec').style.display = (tab === 'fee') ? 'block' : 'none';
   const ms = document.getElementById('shira-manual-sec'); if (ms) ms.style.display = (tab === 'manual') ? 'block' : 'none';
-  for (const [t, id] of [['list','stab-list'],['fee','stab-fee'],['manual','stab-manual']]) {
+  const hs = document.getElementById('shira-hold-sec'); if (hs) hs.style.display = (tab === 'hold') ? 'block' : 'none';
+  for (const [t, id] of [['list','stab-list'],['fee','stab-fee'],['hold','stab-hold'],['manual','stab-manual']]) {
     const el = document.getElementById(id); if (!el) continue; const on = (t === tab);
     el.style.cssText = `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid ${on?'var(--green)':'transparent'};color:${on?'var(--green)':'var(--muted)'};`;
   }
   if (tab === 'fee') renderShiraFee();
+  if (tab === 'hold') renderShiraHold();
 }
 
 function _shiraFiltered() {
@@ -2254,7 +2272,7 @@ function renderShira() {
       if (x.dead) badge = '<span style="position:absolute;top:6px;right:6px;background:#ef4444;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">죽음 Dead</span>';
       else if (x.closed) badge = '<span style="position:absolute;top:6px;right:6px;background:#f59e0b;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">정산완료 Settled</span>';
       else if (x.sold) badge = '<span style="position:absolute;top:6px;right:6px;background:#16a34a;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">판매됨 Sold</span>';
-      const closedTag = '';
+      const holdTag = x.holding ? '<span style="position:absolute;bottom:6px;left:6px;background:#7c3aed;color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;">📦 보관중 Held</span>' : '';
       const settledNote = x.closed ? `<span style="color:#f59e0b;font-size:12px;margin-left:2px;">(${x.closed_date || ''}) 정산완료 Settled</span>` : '';
       return `
       <div class="shira-card${grey}" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
@@ -2265,7 +2283,7 @@ function renderShira() {
                onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()"
                onerror="this.style.display='none'">
           <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
-          ${badge}${closedTag}
+          ${badge}${holdTag}
         </div>
         <div style="padding:8px 10px;">
           <div style="${PF}font-size:13px;">${fmt(x.twd)} TWD</div>
@@ -2273,6 +2291,7 @@ function renderShira() {
           <div style="display:flex;gap:10px;margin-top:6px;font-size:13px;flex-wrap:wrap;">
             <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;"><input type="checkbox" ${soldChk} ${RO?'disabled':''} onchange="shiraToggle('${x.item_no}','sold',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"> 판매 Sold</label>${settledNote}
             <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;color:#ef4444;"><input type="checkbox" ${deadChk} ${RO?'disabled':''} onchange="shiraToggle('${x.item_no}','dead',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:#ef4444;"> 죽음 Dead</label>
+            <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;color:#a78bfa;"><input type="checkbox" ${x.holding?'checked':''} ${RO?'disabled':''} onchange="shiraToggle('${x.item_no}','holding',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;"> 📦 보관 Hold</label>
           </div>
         </div>
       </div>`;
@@ -2311,7 +2330,7 @@ function renderShiraFee() {
     const fee = feeOf(x), sup = (x.krw||0)-fee;
     return `
       <tr style="${MF}">
-        <td style="padding:4px;"><img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'"></td>
+        <td style="padding:4px;"><img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:96px;height:96px;object-fit:cover;border-radius:6px;" onerror="this.style.display='none'"></td>
         <td style="${MF}">${x.item_no}</td>
         <td style="text-align:center;"><span style="color:var(--green)">✅</span></td>
         <td style="text-align:right;${MF}">${fmt(x.twd)}</td>
@@ -2325,7 +2344,7 @@ function renderShiraFee() {
     const fee = feeOf(x), sup = (x.krw||0)-fee;
     return `
       <tr style="${MF}opacity:0.5;background:rgba(255,255,255,0.02);">
-        <td style="padding:4px;"><img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:4px;filter:grayscale(1);" onerror="this.style.display='none'"></td>
+        <td style="padding:4px;"><img src="${API}/api/shira/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:96px;height:96px;object-fit:cover;border-radius:6px;filter:grayscale(1);" onerror="this.style.display='none'"></td>
         <td style="${MF}">${x.item_no}</td>
         <td style="text-align:center;">✅</td>
         <td style="text-align:right;${MF}">${fmt(x.twd)}</td>
@@ -2352,17 +2371,17 @@ function renderShiraFee() {
       const feeS  = g.reduce((a,x)=>a+feeOf(x),0);
       const supS  = g.reduce((a,x)=>a+((x.krw||0)-feeOf(x)),0);
       const tSum  = g.reduce((a,x)=>a+(x.twd||0),0);
-      html += `<tr><td colspan="8" style="${MF}background:rgba(245,158,11,0.14);color:#f59e0b;font-weight:700;padding:8px 6px;border-top:2px solid var(--border);">📅 ${d} 정산 / Settled · ${g.length}건 · 판매 ${fmt(kSum)} KRW (${fmt(tSum)} TWD) · 수수료(내몫) ${fmt(feeS)} · 시라토리 ${fmt(supS)}</td></tr>`;
+      html += `<tr><td colspan="8" style="${MF}background:rgba(245,158,11,0.14);color:#f59e0b;font-weight:700;padding:8px 6px;border-top:2px solid var(--border);">📅 ${d} 정산 / Settled · ${g.length}건 · 판매 ${fmt(kSum)} KRW (${fmt(tSum)} TWD) · 수수료(내몫) ${fmt(feeS)} · 시라토리 ${fmt(supS)}${RO ? '' : ` <button onclick="shiraReopen('${d}')" style="margin-left:10px;background:#6b7280;color:#fff;border:none;border-radius:5px;padding:3px 9px;font-size:12px;cursor:pointer;">↩ 되돌리기 Undo</button>`}</td></tr>`;
       html += g.map(rowPast).join('');
     }
   }
   tb.innerHTML = html;
 }
 async function shiraToggle(item_no, field, value) {
-  const v = (field === 'rate') ? parseInt(value) : (value ? 1 : 0);
+  const v = (field === 'rate') ? parseInt(value) : (field === 'buyer') ? String(value) : (value ? 1 : 0);
   const it = _shiraAll.find(x => x.item_no === item_no);
   if (it) it[field] = v;            // 즉시 로컬 반영
-  renderShira(); renderShiraFee();
+  renderShira(); renderShiraFee(); renderShiraHold();
   try {
     await fetch(API + '/api/shira/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({item_no, field, value: v})});
   } catch(e) { toast('저장 실패(서버)', 'err'); }
@@ -2388,6 +2407,55 @@ async function shiraCloseMonth() {
     if (d.ok) { toast(`📅 월 마감 / Settled: ${d.closed}건 (${d.date||''})`, 'ok'); loadShira(); }
     else toast('오류: ' + (d.error||''), 'err');
   } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function shiraReopen(date) {
+  const msg = date
+    ? `${date} 정산을 되돌릴까요? / Undo settlement of ${date}?\n\n해당 상품들이 다시 '판매(미정산)'으로 돌아갑니다.`
+    : `모든 정산완료를 취소하고 초기화할까요? / Reset ALL settlements?\n\n모든 정산완료 상품이 '판매(미정산)'으로 돌아갑니다.`;
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch(API + '/api/shira/reopen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({date})});
+    const d = await r.json();
+    if (d.ok) { toast(`↩ 되돌림 / Reopened: ${d.reopened}건`, 'ok'); loadShira(); }
+    else toast('오류: ' + (d.error||''), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+function renderShiraHold() {
+  const wrap = document.getElementById('shiraHoldGrid');
+  if (!wrap) return;
+  const RO = !!window._readOnly;
+  const fmt = (n) => Number(n||0).toLocaleString();
+  const PF = "font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;";
+  const q = (document.getElementById('shiraSearch')||{value:''}).value.trim().toLowerCase();
+  const list = _shiraAll.filter(x => x.holding && (!q || (x.item_no||'').toLowerCase().includes(q)));
+  const cEl = document.getElementById('shira-hold-count'); if (cEl) cEl.textContent = _shiraAll.filter(x=>x.holding).length;
+  if (!list.length) { wrap.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">보관중인 상품이 없습니다 / None held</div>'; return; }
+  wrap.innerHTML = list.map(x => {
+    const url = `${API}/api/shira/photo/${encodeURIComponent(x.item_no)}`;
+    const buyer = (x.buyer||'').replace(/"/g,'&quot;');
+    return `
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
+        <div style="position:relative;background:#000;">
+          <img src="${url}" loading="lazy" style="width:100%;height:170px;object-fit:cover;display:block;cursor:zoom-in;"
+               onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">
+          <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
+          <span style="position:absolute;top:6px;right:6px;background:#7c3aed;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">📦 보관중 Held</span>
+        </div>
+        <div style="padding:8px 10px;">
+          <div style="${PF}font-size:13px;">${fmt(x.twd)} TWD</div>
+          <div style="${PF}font-size:15px;color:var(--green);font-weight:700;">${fmt(x.krw)} won</div>
+          <div style="margin-top:8px;">
+            <label style="font-size:12px;color:var(--muted);">구매자 / Buyer</label>
+            <input type="text" value="${buyer}" ${RO?'readonly':''} placeholder="이름 입력 / name"
+                   onchange="shiraToggle('${x.item_no}','buyer',this.value)"
+                   style="width:100%;box-sizing:border-box;margin-top:3px;padding:6px 8px;${PF}background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
+          </div>
+          ${RO ? '' : `<button onclick="shiraToggle('${x.item_no}','holding',false)" style="margin-top:8px;width:100%;background:#374151;color:#fff;border:none;border-radius:6px;padding:6px;font-size:12px;cursor:pointer;">📦 보관 해제 / Remove</button>`}
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function shiraManualPreview(inp) {

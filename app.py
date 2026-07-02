@@ -2804,7 +2804,7 @@ def _ensure_shira_table(conn):
         rate INTEGER DEFAULT 36,
         photo TEXT, img BLOB, created_at TEXT
     )""")
-    for ddl in ('dead INTEGER DEFAULT 0', 'closed INTEGER DEFAULT 0', 'closed_date TEXT', 'img BLOB'):
+    for ddl in ('dead INTEGER DEFAULT 0', 'closed INTEGER DEFAULT 0', 'closed_date TEXT', 'img BLOB', 'holding INTEGER DEFAULT 0', 'buyer TEXT'):
         try:
             conn.execute("ALTER TABLE shira_items ADD COLUMN %s" % ddl)
         except Exception:
@@ -2915,7 +2915,8 @@ def shira_list():
     _ensure_shira_table(conn)
     rows = conn.execute(
         "SELECT item_no, month, num, twd, krw, sold, settled, "
-        "COALESCE(dead,0) AS dead, COALESCE(closed,0) AS closed, closed_date, rate, photo "
+        "COALESCE(dead,0) AS dead, COALESCE(closed,0) AS closed, closed_date, "
+        "COALESCE(holding,0) AS holding, buyer, rate, photo "
         "FROM shira_items ORDER BY month, num"
     ).fetchall()
     conn.close()
@@ -2943,7 +2944,7 @@ def shira_update():
     ino = (data.get('item_no') or '').strip()
     field = (data.get('field') or '').strip()
     val = data.get('value')
-    if not ino or field not in ('sold', 'settled', 'dead', 'rate'):
+    if not ino or field not in ('sold', 'settled', 'dead', 'holding', 'rate', 'buyer'):
         return jsonify({'error': '잘못된 요청'}), 400
     if field == 'rate':
         try:
@@ -2952,6 +2953,8 @@ def shira_update():
             val = 36
         if val not in (36, 50):
             val = 36
+    elif field == 'buyer':
+        val = (str(val) if val is not None else '').strip()[:100]
     else:
         val = 1 if val else 0
     conn = get_conn()
@@ -3009,6 +3012,28 @@ def shira_close_month():
     conn.close()
     logger.info("🛍 Shira 월마감: %d건 정산완료(%s)" % (n, today))
     return jsonify({'ok': True, 'closed': n, 'date': today})
+
+
+@app.route('/api/shira/reopen', methods=['POST'])
+def shira_reopen():
+    """정산 되돌리기: 특정 날짜(date)의 정산완료를 취소. date 없으면 전체 정산 초기화."""
+    data = request.get_json(silent=True) or {}
+    date = (data.get('date') or '').strip()
+    conn = get_conn()
+    _ensure_shira_table(conn)
+    if date:
+        n = conn.execute(
+            "UPDATE shira_items SET closed=0, settled=0, closed_date=NULL "
+            "WHERE COALESCE(closed,0)=1 AND COALESCE(closed_date,'')=?", (date,)
+        ).rowcount
+    else:
+        n = conn.execute(
+            "UPDATE shira_items SET closed=0, settled=0, closed_date=NULL WHERE COALESCE(closed,0)=1"
+        ).rowcount
+    conn.commit()
+    conn.close()
+    logger.info("🛍 Shira 정산 되돌리기: %d건 (date=%s)" % (n, date or '전체'))
+    return jsonify({'ok': True, 'reopened': n})
 
 
 @app.route('/api/shira/add-manual', methods=['POST'])
