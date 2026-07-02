@@ -3078,6 +3078,196 @@ def shira_add_manual():
     return jsonify({'ok': True, 'item_no': item_no, 'total': total})
 
 
+# ══════════════════════════════════════════════════════════════════
+#  Zong(黃宗禮) 위탁판매 — 페북 개별 게시 상품 판매/정산
+# ══════════════════════════════════════════════════════════════════
+def _zong_dir():
+    d = os.path.join(os.path.dirname(DB_PATH), 'zong_img')
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def _ensure_zong_table(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS zong_items (
+        item_no TEXT UNIQUE, num INTEGER,
+        code TEXT, variety TEXT, size TEXT, qty TEXT,
+        krw INTEGER, twd INTEGER, usd REAL,
+        fb_url TEXT, fb_date TEXT,
+        sold INTEGER DEFAULT 0, dead INTEGER DEFAULT 0, holding INTEGER DEFAULT 0,
+        closed INTEGER DEFAULT 0, closed_date TEXT, buyer TEXT,
+        rate INTEGER DEFAULT 36, photo TEXT, img BLOB, created_at TEXT
+    )""")
+
+
+@app.route('/api/zong/list', methods=['GET'])
+def zong_list():
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    rows = conn.execute(
+        "SELECT item_no, num, code, variety, size, qty, krw, twd, usd, fb_url, fb_date, "
+        "sold, COALESCE(dead,0) AS dead, COALESCE(holding,0) AS holding, "
+        "COALESCE(closed,0) AS closed, closed_date, buyer, rate, photo "
+        "FROM zong_items ORDER BY num DESC"
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/zong/add', methods=['POST'])
+def zong_add():
+    f = request.files.get('file')
+    def _i(k):
+        try:
+            return int(float(request.form.get(k) or 0))
+        except Exception:
+            return 0
+    def _f(k):
+        try:
+            return float(request.form.get(k) or 0)
+        except Exception:
+            return 0.0
+    def _s(k):
+        return (request.form.get(k) or '').strip()
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    row = conn.execute("SELECT COALESCE(MAX(num),0) AS m FROM zong_items").fetchone()
+    num = (row['m'] or 0) + 1
+    item_no = "Z-%03d" % num
+    data = f.read() if f else None
+    if data:
+        try:
+            open(os.path.join(_zong_dir(), item_no + '.jpg'), 'wb').write(data)
+        except Exception:
+            pass
+    conn.execute(
+        "INSERT INTO zong_items (item_no,num,code,variety,size,qty,krw,twd,usd,fb_url,fb_date,"
+        "sold,dead,holding,closed,rate,photo,img,created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,36,?,?,?)",
+        (item_no, num, _s('code'), _s('variety'), _s('size'), _s('qty'),
+         _i('krw'), _i('twd'), _f('usd'), _s('fb_url'), _s('fb_date'),
+         item_no + '.jpg', (sqlite3.Binary(data) if data else None), now_kst().isoformat()))
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) AS c FROM zong_items").fetchone()['c']
+    conn.close()
+    logger.info("🌿 Zong 등록: %s" % item_no)
+    return jsonify({'ok': True, 'item_no': item_no, 'total': total})
+
+
+@app.route('/api/zong/update', methods=['POST'])
+def zong_update():
+    data = request.get_json(silent=True) or {}
+    ino = (data.get('item_no') or '').strip()
+    field = (data.get('field') or '').strip()
+    val = data.get('value')
+    allowed = ('code', 'variety', 'size', 'qty', 'fb_url', 'fb_date', 'buyer',
+               'sold', 'dead', 'holding', 'closed', 'krw', 'twd', 'usd', 'rate')
+    if not ino or field not in allowed:
+        return jsonify({'error': '잘못된 요청'}), 400
+    if field in ('sold', 'dead', 'holding', 'closed'):
+        val = 1 if val else 0
+    elif field == 'rate':
+        try:
+            val = max(0, min(100, int(float(val))))
+        except Exception:
+            val = 36
+    elif field in ('krw', 'twd'):
+        try:
+            val = int(float(val))
+        except Exception:
+            val = 0
+    elif field == 'usd':
+        try:
+            val = float(val)
+        except Exception:
+            val = 0.0
+    else:
+        val = (str(val) if val is not None else '').strip()[:300]
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    conn.execute("UPDATE zong_items SET %s=? WHERE item_no=?" % field, (val, ino))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/zong/delete', methods=['POST'])
+def zong_delete():
+    data = request.get_json(silent=True) or {}
+    ino = (data.get('item_no') or '').strip()
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    n = conn.execute("DELETE FROM zong_items WHERE item_no=?", (ino,)).rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'deleted': n})
+
+
+@app.route('/api/zong/photo/<path:item_no>', methods=['GET'])
+def zong_photo(item_no):
+    import io as _io
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    row = conn.execute("SELECT img FROM zong_items WHERE item_no=?", (item_no,)).fetchone()
+    conn.close()
+    if row is not None and row['img']:
+        return send_file(_io.BytesIO(row['img']), mimetype='image/jpeg')
+    p = os.path.join(_zong_dir(), item_no + '.jpg')
+    if os.path.exists(p):
+        return send_file(p, mimetype='image/jpeg')
+    return ('', 404)
+
+
+@app.route('/api/zong/close-month', methods=['POST'])
+def zong_close_month():
+    today = now_kst().strftime('%Y-%m-%d')
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    n = conn.execute(
+        "UPDATE zong_items SET closed=1, closed_date=? "
+        "WHERE sold=1 AND COALESCE(dead,0)=0 AND COALESCE(closed,0)=0", (today,)
+    ).rowcount
+    conn.commit()
+    conn.close()
+    logger.info("🌿 Zong 월마감: %d건 (%s)" % (n, today))
+    return jsonify({'ok': True, 'closed': n, 'date': today})
+
+
+@app.route('/api/zong/reopen', methods=['POST'])
+def zong_reopen():
+    data = request.get_json(silent=True) or {}
+    date = (data.get('date') or '').strip()
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    if date:
+        n = conn.execute(
+            "UPDATE zong_items SET closed=0, closed_date=NULL "
+            "WHERE COALESCE(closed,0)=1 AND COALESCE(closed_date,'')=?", (date,)).rowcount
+    else:
+        n = conn.execute(
+            "UPDATE zong_items SET closed=0, closed_date=NULL WHERE COALESCE(closed,0)=1").rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'reopened': n})
+
+
+@app.route('/api/zong/set-all-rate', methods=['POST'])
+def zong_set_all_rate():
+    data = request.get_json(silent=True) or {}
+    try:
+        rate = max(0, min(100, int(float(data.get('rate')))))
+    except Exception:
+        rate = 36
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    n = conn.execute("UPDATE zong_items SET rate=?", (rate,)).rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'updated': n, 'rate': rate})
+
+
 # DB 초기화 + 스케줄러 시작 (모듈 import 시점)
 init_db()
 _ensure_scheduler()

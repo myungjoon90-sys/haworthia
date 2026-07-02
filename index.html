@@ -494,6 +494,9 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div class="nav-item" onclick="showPage('shira')" id="nav-shira">
     🛍 Shira
   </div>
+  <div class="nav-item" onclick="showPage('zong')" id="nav-zong">
+    🌿 Zong
+  </div>
   <div class="nav-item" onclick="showPage('mapping')" id="nav-mapping">
     🔗 닉네임 매핑
   </div>
@@ -931,6 +934,109 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   </div>
 </div>
 
+<div class="page" id="page-zong">
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-head">
+      <h3>🌿 Zong <span style="font-weight:400;font-size:13px;color:var(--muted);">黃宗禮 위탁 상품 / Zong consigned items</span></h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="zongSearch" oninput="renderZong()" placeholder="🔍 코드/품종 검색 / Search" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:210px;">
+        <button class="btn" id="zongCloseBtn" style="background:#b45309;color:#fff;" onclick="zongCloseMonth()" title="판매 체크된 상품을 오늘 날짜로 정산완료 처리">📅 월 마감 (Close Month)</button>
+        <label style="display:inline-flex;gap:5px;align-items:center;font-size:13px;color:var(--muted);cursor:pointer;"><input type="checkbox" id="zongShowClosed" onchange="renderZong()" style="cursor:pointer;"> 마감 항목 숨기기 (Hide closed)</label>
+        <button class="btn btn-secondary" onclick="loadZong()">🔄 새로고침 (Refresh)</button>
+        <span id="zongRoNote" style="display:none;align-items:center;font-size:12px;color:#f59e0b;">👁 보기 전용 / View only</span>
+      </div>
+    </div>
+    <div style="padding:0 16px 12px;display:flex;gap:20px;flex-wrap:wrap;font-size:14px;">
+      <span>판매(미정산) / Sold·unsettled <strong id="zong-sold-count" style="color:var(--green)">0</strong>건 · <strong id="zong-sold-krw" style="color:var(--green)">0</strong> 원</span>
+      <span style="color:#ef4444">죽음 / Dead <strong id="zong-dead-count" style="color:#ef4444">0</strong>건</span>
+      <span style="color:var(--muted)">전체 / Total <strong id="zong-total-count">0</strong>건</span>
+      <span style="width:100%;border-top:1px dashed var(--border);margin-top:6px;padding-top:6px;">✅ 현재까지 정산완료 / Settled so far — <strong id="zong-settled-count" style="color:#9aa7b4">0</strong>건 · <strong id="zong-settled-krw" style="color:#f59e0b">0</strong> 원</span>
+    </div>
+  </div>
+
+  <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap;">
+    <div class="inner-tab active" id="ztab-list" onclick="switchZongTab('list')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid var(--green);color:var(--green);">🌿 상품 목록 (Items)</div>
+    <div class="inner-tab" id="ztab-fee" onclick="switchZongTab('fee')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">💰 수수료 정산 (Commission)</div>
+    <div class="inner-tab" id="ztab-hold" onclick="switchZongTab('hold')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">📦 구매 후 보관 (Held)</div>
+    <div class="inner-tab" id="ztab-add" onclick="switchZongTab('add')" style="padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid transparent;color:var(--muted);">➕ 상품 등록 (Add)</div>
+  </div>
+
+  <div id="zong-list-sec">
+    <div id="zongGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;">
+      <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">상품을 등록하세요 / Add an item</div>
+    </div>
+  </div>
+
+  <div id="zong-fee-sec" style="display:none;font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;">
+    <div class="card">
+      <div class="card-head">
+        <h3>💰 수수료 정산 (Commission settlement)</h3>
+        <div id="zongRateBtns" style="display:flex;gap:8px;">
+          <button class="btn btn-secondary" onclick="zongSetAllRate()">모든 수수료율 설정 / Set all %</button>
+          <button class="btn" style="background:#7f1d1d;color:#fff;" onclick="zongReopen('')" title="모든 정산완료를 취소">↩ 정산 전체 초기화 / Reset all</button>
+        </div>
+      </div>
+      <div style="padding:0 16px 10px;font-size:14px;">
+        판매분 수수료 합계 / Commission on sold — <strong id="zong-fee-krw" style="color:var(--green)">0</strong> 원
+        <span style="color:var(--muted)"> · Zong 몫 / Zong share <strong id="zong-supplier-krw">0</strong> 원</span>
+      </div>
+      <div class="tbl-wrap">
+        <table style="table-layout:auto;width:100%;">
+          <thead><tr>
+            <th>사진<br><span style="font-weight:400;font-size:11px;color:var(--muted);">Photo</span></th>
+            <th>코드<br><span style="font-weight:400;font-size:11px;color:var(--muted);">Code</span></th>
+            <th style="text-align:center;">판매<br><span style="font-weight:400;font-size:11px;color:var(--muted);">Sold</span></th>
+            <th style="text-align:right;">KRW</th>
+            <th style="text-align:center;">수수료율<br><span style="font-weight:400;font-size:11px;color:var(--muted);">Rate</span></th>
+            <th style="text-align:right;">수수료(내몫)<br><span style="font-weight:400;font-size:11px;color:var(--muted);">Commission</span></th>
+            <th style="text-align:right;">Zong 몫<br><span style="font-weight:400;font-size:11px;color:var(--muted);">Zong</span></th>
+          </tr></thead>
+          <tbody id="zongFeeTbody"><tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">판매 체크된 상품이 없습니다 / No items checked as Sold</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="zong-hold-sec" style="display:none;">
+    <div class="card">
+      <div class="card-head">
+        <h3>📦 구매 후 보관 (Purchased &amp; held)</h3>
+        <span style="font-size:13px;color:var(--muted);">보관중 / Held <strong id="zong-hold-count" style="color:#a78bfa;">0</strong>건</span>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin:0 16px 8px;">입금(판매)됐지만 보관중인 상품입니다. 상품 목록에서 <b>📦 보관</b> 체크 시 여기로 옵니다. 구매자 이름을 적으면 자동 저장됩니다.</p>
+      <div id="zongHoldGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;padding:0 16px 16px;">
+        <div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">보관중인 상품이 없습니다 / None held</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="zong-add-sec" style="display:none;">
+    <div class="card" style="max-width:660px;">
+      <div class="card-head"><h3>➕ 상품 등록 (Add item)</h3></div>
+      <div class="card-body" style="padding:16px;">
+        <p style="font-size:13px;color:var(--muted);margin-top:0;">Zong 페북 글을 아래에 <b>붙여넣고 [자동 채움]</b>을 누르면 코드/품종/크기/수량/가격이 자동으로 채워집니다. 사진은 페북에서 저장해 올려주세요.<br><span style="font-size:12px;">Paste Zong's Facebook post, click Auto-fill, then upload the photo you saved from Facebook.</span></p>
+        <textarea id="zongPaste" rows="6" placeholder="여기에 페북 글 붙여넣기 / Paste Facebook post here..." style="width:100%;box-sizing:border-box;padding:10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;"></textarea>
+        <div style="margin:8px 0;"><button class="btn btn-primary" onclick="zongParse()">✨ 자동 채움 / Auto-fill</button></div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <label style="grid-column:1/-1;font-size:14px;">사진 / Photo<br><input type="file" id="zongPhoto" accept="image/*" style="margin-top:5px;" onchange="zongPreview(this)"></label>
+          <div id="zongPreviewWrap" style="display:none;grid-column:1/-1;"><img id="zongPreview" style="width:180px;height:180px;object-fit:cover;border-radius:8px;border:1px solid var(--border);"></div>
+          <label style="grid-column:1/-1;font-size:14px;">코드/이름 / Code·Name<br><input id="zong_code" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">품종 / Variety<br><input id="zong_variety" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">크기 / Size<br><input id="zong_size" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">수량 / Qty<br><input id="zong_qty" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">가격 / Price (KRW)<br><input id="zong_krw" type="number" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">TWD (선택)<br><input id="zong_twd" type="number" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">USD (선택)<br><input id="zong_usd" type="number" step="0.01" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">페북 글 링크 / FB post link<br><input id="zong_fburl" placeholder="https://facebook.com/..." style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+          <label style="font-size:14px;">날짜태그 / Date tag<br><input id="zong_fbdate" placeholder="26July" style="width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);"></label>
+        </div>
+        <div style="margin-top:14px;"><button class="btn btn-primary" id="zongAddBtn" onclick="zongAdd()">➕ 등록 / Add</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="page" id="page-members">
   <div class="card" style="margin-bottom:16px;">
     <div class="card-head">
@@ -1144,22 +1250,29 @@ const API = '';
 // ══════════════════════════════════════════════════════════════════
 const _ACCOUNTS = {
   shiratori:      { pw: 'shira', role: 'shira' },
+  zongli:         { pw: 'zong',  role: 'zong' },
   jiyanghaworthia:{ pw: '2015',  role: 'owner' }
 };
 function applyRole(role) {
   window._role = role;
   window._tabUnlocked = (role === 'owner');   // owner는 탭 비번 면제(로그인으로 인증)
   window._shiraUnlocked = true;
+  window._zongUnlocked = true;
   const owner = (role === 'owner');
+  // 역할별로 보이는 nav
+  const navFor = { owner: null, shira: 'nav-shira', zong: 'nav-zong' };
+  const only = navFor[role];
   document.querySelectorAll('.nav-item').forEach(n => {
-    n.style.display = (owner || n.id === 'nav-shira') ? '' : 'none';
+    n.style.display = (owner || n.id === only) ? '' : 'none';
   });
   const ab = document.getElementById('adminHeaderBtns'); if (ab) ab.style.display = owner ? 'flex' : 'none';
   const lo = document.getElementById('logoutBtn'); if (lo) lo.style.display = '';
-  const who = document.getElementById('loginWho'); if (who) who.textContent = owner ? '지양하월시아' : '시라토리 (Shiratori)';
+  const nameMap = { owner: '지양하월시아', shira: '시라토리 (Shiratori)', zong: 'Zong (黃宗禮)' };
+  const who = document.getElementById('loginWho'); if (who) who.textContent = nameMap[role] || '';
   window._readOnly = !owner;
   applyShiraPerms();
-  showPage(owner ? 'invoice' : 'shira');
+  if (typeof applyZongPerms === 'function') applyZongPerms();
+  showPage(owner ? 'invoice' : (role === 'zong' ? 'zong' : 'shira'));
 }
 function applyShiraPerms() {
   const ro = !!window._readOnly;
@@ -1193,6 +1306,12 @@ function showPage(id) {
     if (pw !== SHIRA_PW) { toast('비밀번호가 올바르지 않습니다', 'err'); return; }
     window._shiraUnlocked = true;
   }
+  if (id === 'zong' && !window._zongUnlocked) {
+    const pw = prompt('🔒 Zong 비밀번호');
+    if (pw === null) return;
+    if (pw !== ZONG_PW) { toast('비밀번호가 올바르지 않습니다', 'err'); return; }
+    window._zongUnlocked = true;
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
@@ -1210,6 +1329,7 @@ function showPage(id) {
   if (id === 'history') { loadHistory(); }
   if (id === 'consign') { loadConsignSessions(); loadConsign(); }
   if (id === 'shira') { loadShira(); }
+  if (id === 'zong') { loadZong(); }
   if (id === 'mapping')  loadMappings();
   if (id === 'guide')    { updateGuideBanner(document.getElementById('serverDot').classList.contains('on')); loadSmsLog(); }
 }
@@ -2185,6 +2305,7 @@ async function loadConsign() {
 //  🛍 Shira (시라토리 위탁 상품)
 // ══════════════════════════════════════════════════════════════════
 const SHIRA_PW = 'shira';   // Shira 탭 전용 비밀번호 (시라토리용)
+const ZONG_PW = 'zong';     // Zong 탭 전용 비밀번호
 let _shiraAll = [];
 let _shiraTab = 'list';
 let _shiraHoverTimer = null;
@@ -3791,9 +3912,301 @@ function toast(msg, type='ok') {
 // ══════════════════════════════════════════════════════════════════
 //  Init
 // ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+//  Zong(黃宗禮) 위탁판매
+// ══════════════════════════════════════════════════════════════════
+let _zongAll = [];
+let _zongTab = 'list';
+const _zesc = (t) => String(t==null?'':t).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const _zfmt = (n) => Number(n||0).toLocaleString();
+const _ZPF = "font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;";
+
+function applyZongPerms() {
+  const ro = !!window._readOnly;
+  ['zongCloseBtn','ztab-add','zongRateBtns'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = ro ? 'none' : '';
+  });
+  const note = document.getElementById('zongRoNote'); if (note) note.style.display = ro ? 'inline-flex' : 'none';
+}
+
+async function loadZong() {
+  const grid = document.getElementById('zongGrid');
+  if (grid) grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">불러오는 중...</div>';
+  try {
+    const r = await fetch(API + '/api/zong/list');
+    _zongAll = await r.json();
+    renderZong(); renderZongFee(); renderZongHold();
+  } catch(e) { toast('Zong 목록 불러오기 실패', 'err'); }
+}
+
+function switchZongTab(tab) {
+  _zongTab = tab;
+  document.getElementById('zong-list-sec').style.display = (tab === 'list') ? 'block' : 'none';
+  document.getElementById('zong-fee-sec').style.display  = (tab === 'fee')  ? 'block' : 'none';
+  document.getElementById('zong-hold-sec').style.display = (tab === 'hold') ? 'block' : 'none';
+  document.getElementById('zong-add-sec').style.display  = (tab === 'add')  ? 'block' : 'none';
+  for (const [t, id] of [['list','ztab-list'],['fee','ztab-fee'],['hold','ztab-hold'],['add','ztab-add']]) {
+    const el = document.getElementById(id); if (!el) continue; const on = (t === tab);
+    el.style.cssText = `padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;border-bottom:2px solid ${on?'var(--green)':'transparent'};color:${on?'var(--green)':'var(--muted)'};`;
+  }
+  if (tab === 'fee')  renderZongFee();
+  if (tab === 'hold') renderZongHold();
+}
+
+function _zongFiltered() {
+  const q = (document.getElementById('zongSearch')||{value:''}).value.trim().toLowerCase();
+  if (!q) return _zongAll;
+  return _zongAll.filter(x => ((x.code||'')+' '+(x.variety||'')+' '+(x.item_no||'')).toLowerCase().includes(q));
+}
+
+function renderZong() {
+  const grid = document.getElementById('zongGrid');
+  if (!grid) return;
+  const RO = !!window._readOnly; applyZongPerms();
+  // 합계
+  const soldActive = _zongAll.filter(x => x.sold && !x.closed && !x.dead);
+  const settledList = _zongAll.filter(x => x.closed);
+  const deadList = _zongAll.filter(x => x.dead && !x.closed);
+  document.getElementById('zong-sold-count').textContent = soldActive.length;
+  document.getElementById('zong-sold-krw').textContent = _zfmt(soldActive.reduce((s,x)=>s+(x.krw||0),0));
+  document.getElementById('zong-settled-count').textContent = settledList.length;
+  document.getElementById('zong-settled-krw').textContent = _zfmt(settledList.reduce((s,x)=>s+(x.krw||0),0));
+  document.getElementById('zong-dead-count').textContent = deadList.length;
+  document.getElementById('zong-total-count').textContent = _zongAll.length;
+
+  const hideClosed = (document.getElementById('zongShowClosed')||{checked:false}).checked;
+  const list = _zongFiltered().filter(x => hideClosed ? !x.closed : true);
+  if (!list.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">상품이 없습니다 / No items — ➕ 상품 등록</div>'; return; }
+  grid.innerHTML = list.map(x => {
+    const grey = (x.sold || x.dead || x.closed) ? ' shira-settled' : '';
+    const url = `${API}/api/zong/photo/${encodeURIComponent(x.item_no)}`;
+    let badge = '';
+    if (x.dead) badge = '<span style="position:absolute;top:6px;right:6px;background:#ef4444;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">죽음 Dead</span>';
+    else if (x.closed) badge = '<span style="position:absolute;top:6px;right:6px;background:#f59e0b;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">정산완료 Settled</span>';
+    else if (x.sold) badge = '<span style="position:absolute;top:6px;right:6px;background:#16a34a;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">판매됨 Sold</span>';
+    const holdTag = x.holding ? '<span style="position:absolute;bottom:6px;left:6px;background:#7c3aed;color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;">📦 보관중 Held</span>' : '';
+    const settledNote = x.closed ? `<span style="color:#f59e0b;font-size:12px;margin-left:2px;">(${x.closed_date||''}) 정산완료 Settled</span>` : '';
+    const twdusd = ((x.twd? _zfmt(x.twd)+' TWD':'') + (x.usd? (x.twd?' · ':'')+Number(x.usd).toLocaleString()+' USD':''));
+    const fbLink = x.fb_url ? `<a href="${_zesc(x.fb_url)}" target="_blank" rel="noopener" style="font-size:12px;color:#60a5fa;text-decoration:none;">🔗 페북 글 열기 / Open FB</a>` : '';
+    const soldRemind = (x.sold && x.fb_url && !x.closed) ? `<div style="margin-top:5px;font-size:12px;background:rgba(245,158,11,0.15);border:1px solid #b45309;border-radius:6px;padding:5px 7px;color:#f59e0b;">👉 페북에 <b>'sold'</b> 댓글 남기기 · <a href="${_zesc(x.fb_url)}" target="_blank" rel="noopener" style="color:#fbbf24;">댓글 달러 가기</a></div>` : '';
+    return `
+      <div class="shira-card${grey}" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
+        <div style="position:relative;background:#000;">
+          <img src="${url}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;cursor:${RO?'zoom-in':'pointer'};"
+               title="${RO?'1초 올려두면 크게 보기':'클릭: 판매 체크 · 1초 올려두면 크게 보기'}"
+               ${RO ? '' : `onclick="zongToggle('${x.item_no}','sold',${x.sold ? 'false' : 'true'})"`}
+               onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">
+          <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
+          ${badge}${holdTag}
+        </div>
+        <div style="padding:8px 10px;">
+          <div style="${_ZPF}font-size:13px;font-weight:700;line-height:1.25;">${_zesc(x.code)||'(코드 없음)'}</div>
+          ${x.variety? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${_zesc(x.variety)}</div>`:''}
+          ${(x.size||x.qty)? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${x.size?('크기 '+_zesc(x.size)):''}${(x.size&&x.qty)?' · ':''}${x.qty?('수량 '+_zesc(x.qty)):''}</div>`:''}
+          <div style="${_ZPF}font-size:15px;color:var(--green);font-weight:700;margin-top:3px;">${_zfmt(x.krw)} 원</div>
+          ${twdusd? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${twdusd}</div>`:''}
+          ${x.fb_date? `<div style="font-size:11px;color:#60a5fa;">#${_zesc(x.fb_date)}</div>`:''}
+          ${fbLink? `<div style="margin-top:4px;">${fbLink}</div>`:''}
+          <div style="display:flex;gap:10px;margin-top:6px;font-size:13px;flex-wrap:wrap;">
+            <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;"><input type="checkbox" ${x.sold?'checked':''} ${RO?'disabled':''} onchange="zongToggle('${x.item_no}','sold',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green);"> 판매 Sold</label>${settledNote}
+            <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;color:#ef4444;"><input type="checkbox" ${x.dead?'checked':''} ${RO?'disabled':''} onchange="zongToggle('${x.item_no}','dead',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:#ef4444;"> 죽음 Dead</label>
+            <label style="display:inline-flex;gap:4px;align-items:center;cursor:pointer;color:#a78bfa;"><input type="checkbox" ${x.holding?'checked':''} ${RO?'disabled':''} onchange="zongToggle('${x.item_no}','holding',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;"> 📦 보관 Hold</label>
+          </div>
+          ${soldRemind}
+          ${RO ? '' : `<button onclick="zongDelete('${x.item_no}')" style="margin-top:8px;background:#7f1d1d;color:#fff;border:none;border-radius:5px;padding:4px 9px;font-size:12px;cursor:pointer;">🗑 삭제 / Delete</button>`}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderZongFee() {
+  const tb = document.getElementById('zongFeeTbody');
+  if (!tb) return;
+  const RO = !!window._readOnly;
+  const q = (document.getElementById('zongSearch')||{value:''}).value.trim().toLowerCase();
+  const match = (x) => (!q || ((x.code||'')+' '+(x.item_no||'')).toLowerCase().includes(q));
+  const feeOf = (x) => Math.round((x.krw||0)*(x.rate||0)/100);
+  const active = _zongAll.filter(x => x.sold && !x.dead && !x.closed && match(x));
+  const past   = _zongAll.filter(x => x.sold && !x.dead && x.closed && match(x));
+  document.getElementById('zong-fee-krw').textContent = _zfmt(active.reduce((a,x)=>a+feeOf(x),0));
+  document.getElementById('zong-supplier-krw').textContent = _zfmt(active.reduce((a,x)=>a+((x.krw||0)-feeOf(x)),0));
+  if (!active.length && !past.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;'+_ZPF+'">판매 체크된 상품이 없습니다 / No items checked as Sold</td></tr>'; return; }
+  const rateCell = (x) => RO
+    ? `<td style="text-align:center;${_ZPF}">${x.rate}%</td>`
+    : `<td style="text-align:center;"><input type="number" min="0" max="100" value="${x.rate}" onchange="zongToggle('${x.item_no}','rate',this.value)" style="width:58px;text-align:center;padding:3px 4px;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:5px;color:var(--text);${_ZPF}">%</td>`;
+  const imgTd = (x, g) => `<td style="padding:4px;"><img src="${API}/api/zong/photo/${encodeURIComponent(x.item_no)}" loading="lazy" style="width:72px;height:72px;object-fit:cover;border-radius:6px;${g?'filter:grayscale(1);':''}" onerror="this.style.display='none'"></td>`;
+  const rowActive = (x) => { const fee=feeOf(x), sup=(x.krw||0)-fee; return `
+      <tr style="${_ZPF}">
+        ${imgTd(x,false)}
+        <td style="${_ZPF}">${x.item_no}<br><span style="font-size:11px;color:var(--muted);">${_zesc(x.code)}</span></td>
+        <td style="text-align:center;"><span style="color:var(--green)">✅</span></td>
+        <td style="text-align:right;${_ZPF}">${_zfmt(x.krw)}</td>
+        ${rateCell(x)}
+        <td style="text-align:right;${_ZPF}color:var(--green);font-weight:700;">${_zfmt(fee)}</td>
+        <td style="text-align:right;${_ZPF}color:#f59e0b;">${_zfmt(sup)}</td>
+      </tr>`; };
+  const rowPast = (x) => { const fee=feeOf(x), sup=(x.krw||0)-fee; return `
+      <tr style="${_ZPF}opacity:0.5;background:rgba(255,255,255,0.02);">
+        ${imgTd(x,true)}
+        <td style="${_ZPF}">${x.item_no}<br><span style="font-size:11px;color:var(--muted);">${_zesc(x.code)}</span></td>
+        <td style="text-align:center;">✅</td>
+        <td style="text-align:right;${_ZPF}">${_zfmt(x.krw)}</td>
+        <td style="text-align:center;${_ZPF}">${x.rate}%</td>
+        <td style="text-align:right;${_ZPF}font-weight:700;">${_zfmt(fee)}</td>
+        <td style="text-align:right;${_ZPF}">${_zfmt(sup)}</td>
+      </tr>`; };
+  let html = '';
+  if (active.length) {
+    html += `<tr><td colspan="7" style="${_ZPF}background:rgba(22,163,74,0.12);color:var(--green);font-weight:700;padding:8px 6px;">🟢 정산 전 / Unsettled · ${active.length}건 · 판매 ${_zfmt(active.reduce((a,x)=>a+(x.krw||0),0))} 원 · 수수료(내몫) ${_zfmt(active.reduce((a,x)=>a+feeOf(x),0))} · Zong ${_zfmt(active.reduce((a,x)=>a+((x.krw||0)-feeOf(x)),0))}</td></tr>`;
+    html += active.map(rowActive).join('');
+  }
+  if (past.length) {
+    const groups = {};
+    past.forEach(x => { const k = x.closed_date || '(날짜없음)'; (groups[k]=groups[k]||[]).push(x); });
+    Object.keys(groups).sort().reverse().forEach(d => {
+      const g = groups[d];
+      const kSum=g.reduce((a,x)=>a+(x.krw||0),0), feeS=g.reduce((a,x)=>a+feeOf(x),0), supS=g.reduce((a,x)=>a+((x.krw||0)-feeOf(x)),0);
+      html += `<tr><td colspan="7" style="${_ZPF}background:rgba(245,158,11,0.14);color:#f59e0b;font-weight:700;padding:8px 6px;border-top:2px solid var(--border);">📅 ${d} 정산 / Settled · ${g.length}건 · 판매 ${_zfmt(kSum)} 원 · 수수료(내몫) ${_zfmt(feeS)} · Zong ${_zfmt(supS)}${RO?'':` <button onclick="zongReopen('${d}')" style="margin-left:10px;background:#6b7280;color:#fff;border:none;border-radius:5px;padding:3px 9px;font-size:12px;cursor:pointer;">↩ 되돌리기 Undo</button>`}</td></tr>`;
+      html += g.map(rowPast).join('');
+    });
+  }
+  tb.innerHTML = html;
+}
+
+function renderZongHold() {
+  const wrap = document.getElementById('zongHoldGrid');
+  if (!wrap) return;
+  const RO = !!window._readOnly;
+  const q = (document.getElementById('zongSearch')||{value:''}).value.trim().toLowerCase();
+  const list = _zongAll.filter(x => x.holding && (!q || ((x.code||'')+' '+(x.item_no||'')).toLowerCase().includes(q)));
+  const cEl = document.getElementById('zong-hold-count'); if (cEl) cEl.textContent = _zongAll.filter(x=>x.holding).length;
+  if (!list.length) { wrap.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:30px;">보관중인 상품이 없습니다 / None held</div>'; return; }
+  wrap.innerHTML = list.map(x => {
+    const url = `${API}/api/zong/photo/${encodeURIComponent(x.item_no)}`;
+    return `
+      <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
+        <div style="position:relative;background:#000;">
+          <img src="${url}" loading="lazy" style="width:100%;height:170px;object-fit:cover;display:block;cursor:zoom-in;" onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">
+          <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
+          <span style="position:absolute;top:6px;right:6px;background:#7c3aed;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">📦 보관중 Held</span>
+        </div>
+        <div style="padding:8px 10px;">
+          <div style="${_ZPF}font-size:13px;font-weight:700;">${_zesc(x.code)||x.item_no}</div>
+          <div style="${_ZPF}font-size:15px;color:var(--green);font-weight:700;">${_zfmt(x.krw)} 원</div>
+          <div style="margin-top:8px;">
+            <label style="font-size:12px;color:var(--muted);">구매자 / Buyer</label>
+            <input type="text" value="${_zesc(x.buyer)}" ${RO?'readonly':''} placeholder="이름 입력 / name" onchange="zongToggle('${x.item_no}','buyer',this.value)" style="width:100%;box-sizing:border-box;margin-top:3px;padding:6px 8px;${_ZPF}background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
+          </div>
+          ${RO ? '' : `<button onclick="zongToggle('${x.item_no}','holding',false)" style="margin-top:8px;width:100%;background:#374151;color:#fff;border:none;border-radius:6px;padding:6px;font-size:12px;cursor:pointer;">📦 보관 해제 / Remove</button>`}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function zongToggle(item_no, field, value) {
+  const v = (field === 'rate') ? parseInt(value) : (field === 'buyer') ? String(value) : (value ? 1 : 0);
+  const it = _zongAll.find(x => x.item_no === item_no);
+  if (it) it[field] = v;
+  renderZong(); renderZongFee(); renderZongHold();
+  try {
+    await fetch(API + '/api/zong/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({item_no, field, value: v})});
+  } catch(e) { toast('저장 실패(서버)', 'err'); }
+}
+
+async function zongDelete(item_no) {
+  if (!confirm(`${item_no} 상품을 삭제할까요? / Delete this item?`)) return;
+  try {
+    const r = await fetch(API + '/api/zong/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({item_no})});
+    const d = await r.json();
+    if (d.ok) { toast('🗑 삭제됨 / Deleted', 'ok'); loadZong(); } else toast('오류', 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function zongCloseMonth() {
+  const n = _zongAll.filter(x => x.sold && !x.closed && !x.dead).length;
+  if (n === 0) { toast('마감할 판매 상품이 없습니다 / No sold items', 'err'); return; }
+  if (!confirm(`판매 체크된 ${n}건을 월 마감(정산완료) 처리할까요? / Settle ${n} sold items now?\n\n오늘 날짜로 정산완료 표시되고 '판매(미정산)'에서 빠집니다.`)) return;
+  try {
+    const r = await fetch(API + '/api/zong/close-month', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) { toast(`📅 월 마감 / Settled: ${d.closed}건 (${d.date||''})`, 'ok'); loadZong(); } else toast('오류', 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function zongReopen(date) {
+  const msg = date ? `${date} 정산을 되돌릴까요? / Undo settlement of ${date}?` : `모든 정산완료를 취소하고 초기화할까요? / Reset ALL settlements?`;
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch(API + '/api/zong/reopen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({date})});
+    const d = await r.json();
+    if (d.ok) { toast(`↩ 되돌림 / Reopened: ${d.reopened}건`, 'ok'); loadZong(); } else toast('오류', 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+async function zongSetAllRate() {
+  const v = prompt('모든 상품의 수수료율(%)을 입력하세요 / Set commission rate for all (0-100):', '36');
+  if (v === null) return;
+  const rate = parseInt(v);
+  if (isNaN(rate) || rate < 0 || rate > 100) { toast('0~100 사이 숫자', 'err'); return; }
+  try {
+    const r = await fetch(API + '/api/zong/set-all-rate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({rate})});
+    const d = await r.json();
+    if (d.ok) { toast(`수수료율 모두 ${rate}%`, 'ok'); loadZong(); } else toast('오류', 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+
+function zongParse() {
+  const t = document.getElementById('zongPaste').value || '';
+  const grab = (re) => { const m = t.match(re); return m ? m[1].trim().replace(/[.\s]+$/,'') : ''; };
+  const code = grab(/(?:name\s*or\s*code|name|code|이름|코드)\s*[:：]\s*(.+)/i);
+  const variety = grab(/(?:variety|cultivar|품종)[^\n:：]*[:：]\s*(.+)/i);
+  const size = grab(/(?:plant\s*size|size|크기)\s*[:：]\s*(.+)/i);
+  const qty = grab(/(?:quantity|qty|수량)\s*[:：]\s*(.+)/i);
+  let krw = '';
+  const wm = t.match(/[₩\\]\s*([\d,]+)/) || t.match(/([\d,]{3,})\s*원/) || t.match(/(?:price|가격)\s*[:：]\s*[^\d]*([\d,]+)/i);
+  if (wm) krw = wm[1].replace(/,/g,'');
+  const dm = t.match(/#\s*([0-9A-Za-z]+)/);
+  if (code) document.getElementById('zong_code').value = code;
+  if (variety) document.getElementById('zong_variety').value = variety;
+  if (size) document.getElementById('zong_size').value = size;
+  if (qty) document.getElementById('zong_qty').value = qty;
+  if (krw) document.getElementById('zong_krw').value = krw;
+  if (dm) document.getElementById('zong_fbdate').value = dm[1];
+  toast('✨ 자동 채움 완료 — 내용 확인 후 등록하세요', 'ok');
+}
+
+function zongPreview(inp) {
+  const w = document.getElementById('zongPreviewWrap'), img = document.getElementById('zongPreview');
+  if (inp.files && inp.files[0]) { img.src = URL.createObjectURL(inp.files[0]); w.style.display='block'; }
+  else { w.style.display='none'; }
+}
+
+async function zongAdd() {
+  const fi = document.getElementById('zongPhoto');
+  const g = (id) => (document.getElementById(id).value || '').trim();
+  if (!fi || !fi.files || !fi.files.length) { toast('사진을 선택하세요 / Choose a photo', 'err'); return; }
+  if (!g('zong_krw') && !g('zong_code')) { toast('코드 또는 가격을 입력하세요', 'err'); return; }
+  const btn = document.getElementById('zongAddBtn'); const o = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 등록 중...'; }
+  try {
+    const fd = new FormData();
+    fd.append('file', fi.files[0]);
+    [['code','zong_code'],['variety','zong_variety'],['size','zong_size'],['qty','zong_qty'],['krw','zong_krw'],['twd','zong_twd'],['usd','zong_usd'],['fb_url','zong_fburl'],['fb_date','zong_fbdate']].forEach(([k,id]) => fd.append(k, g(id)));
+    const r = await fetch(API + '/api/zong/add', {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) {
+      toast(`➕ 등록 완료 / Added: ${d.item_no}`, 'ok');
+      ['zongPaste','zong_code','zong_variety','zong_size','zong_qty','zong_krw','zong_twd','zong_usd','zong_fburl','zong_fbdate'].forEach(id=>{const e=document.getElementById(id); if(e) e.value='';});
+      fi.value=''; const pw=document.getElementById('zongPreviewWrap'); if(pw) pw.style.display='none';
+      loadZong(); switchZongTab('list');
+    } else toast('오류: ' + (d.error||'실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+  finally { if (btn) { btn.disabled=false; btn.innerHTML=o; } }
+}
+
 (function(){
   let role=null; try { role = sessionStorage.getItem('jh_role'); } catch(e) {}
-  if (role && _ACCOUNTS && (role==='owner'||role==='shira')) {
+  if (role && _ACCOUNTS && (role==='owner'||role==='shira'||role==='zong')) {
     const ov=document.getElementById('loginOverlay'); if(ov) ov.style.display='none';
     applyRole(role);
   }
