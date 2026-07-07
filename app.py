@@ -3098,8 +3098,119 @@ def _ensure_zong_table(conn):
         fb_url TEXT, fb_date TEXT,
         sold INTEGER DEFAULT 0, dead INTEGER DEFAULT 0, holding INTEGER DEFAULT 0,
         closed INTEGER DEFAULT 0, closed_date TEXT, buyer TEXT,
-        rate INTEGER DEFAULT 36, photo TEXT, img BLOB, created_at TEXT
+        rate INTEGER DEFAULT 36, photo TEXT, img BLOB,
+        batch TEXT, sig TEXT, created_at TEXT
     )""")
+    for ddl in ('batch TEXT', 'sig TEXT'):
+        try:
+            conn.execute("ALTER TABLE zong_items ADD COLUMN %s" % ddl)
+        except Exception:
+            pass
+    conn.execute("""CREATE TABLE IF NOT EXISTS zong_photos (
+        item_no TEXT, kind TEXT, idx INTEGER, img BLOB,
+        PRIMARY KEY(item_no, kind, idx)
+    )""")
+
+
+def _zshrink(data, maxpx=1200, q=82):
+    """이미지 축소(JPEG) — DB 용량 절감. PIL 없으면 원본 그대로."""
+    try:
+        from PIL import Image
+        import io as _io
+        im = Image.open(_io.BytesIO(data)).convert('RGB')
+        im.thumbnail((maxpx, maxpx))
+        out = _io.BytesIO()
+        im.save(out, 'JPEG', quality=q)
+        return out.getvalue()
+    except Exception:
+        return data
+
+
+def _zong_excel_images(path):
+    """엑셀(셀 내장 richData 이미지)에서 {행번호: [(열번호,열문자,bytes)]} 추출."""
+    import zipfile, re
+    from xml.etree import ElementTree as ET
+    z = zipfile.ZipFile(path)
+    names = z.namelist()
+    R_NS = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+    XLRD = '{http://schemas.microsoft.com/office/spreadsheetml/2017/richdata}'
+    MAIN = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    result = {}
+    try:
+        rvr = ET.fromstring(z.read('xl/richData/richValueRel.xml'))
+        rel_ids = [el.get(R_NS + 'id') for el in rvr]
+        rels = ET.fromstring(z.read('xl/richData/_rels/richValueRel.xml.rels'))
+        rid2media = {r.get('Id'): r.get('Target').replace('../', 'xl/') for r in rels}
+        rvidx2media = [rid2media.get(rid) for rid in rel_ids]
+        meta = ET.fromstring(z.read('xl/metadata.xml'))
+        future = meta.find(MAIN + 'futureMetadata')
+        fut_rvb = [int(bk.find('.//' + XLRD + 'rvb').get('i')) for bk in future.findall(MAIN + 'bk')]
+        vmeta = meta.find(MAIN + 'valueMetadata')
+        vm2rv = {}
+        for i, bk in enumerate(vmeta.findall(MAIN + 'bk'), start=1):
+            vm2rv[i] = fut_rvb[int(bk.find(MAIN + 'rc').get('v'))]
+    except Exception:
+        return result
+    sheet = [n for n in names if re.match(r'xl/worksheets/sheet\d+\.xml$', n)]
+    if not sheet:
+        return result
+    d = z.read(sheet[0]).decode('utf-8', 'ignore')
+    def col2num(c):
+        n = 0
+        for ch in c:
+            n = n * 26 + (ord(ch) - 64)
+        return n
+    for m in re.finditer(r'<c r="([A-Z]+)(\d+)"[^>]*vm="(\d+)"', d):
+        col, row, vm = m.group(1), int(m.group(2)), int(m.group(3))
+        try:
+            media = rvidx2media[vm2rv[vm]]
+            data = z.read(media)
+        except Exception:
+            continue
+        result.setdefault(row, []).append((col2num(col), col, data))
+    return result
+
+
+def _parse_zong_excel(path):
+    """Zong 리스트 엑셀 → [{num,date,code,variety,size,qty,twd,won,photos:{sell,mother,father}}]"""
+    import openpyxl
+    def _s(v):
+        return ('' if v is None else str(v)).strip()
+    def _int(v):
+        try:
+            return int(float(str(v).replace(',', '')))
+        except Exception:
+            return 0
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    ws = wb.worksheets[0]
+    rows_text = {}
+    for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+        if i == 1:
+            continue
+        row = list(row) + [None] * 8
+        if (row[0] in (None, '')) and not _s(row[2]):
+            continue
+        rows_text[i] = {'num': row[0], 'date': _s(row[1]), 'code': _s(row[2]),
+                        'variety': _s(row[3]), 'size': _s(row[4]), 'qty': _s(row[5]),
+                        'twd': _int(row[6]), 'won': _int(row[7])}
+    wb.close()
+    byrow = _zong_excel_images(path)
+    items = []
+    for i in sorted(rows_text):
+        t = rows_text[i]
+        sell, mother, father = [], [], []
+        for _cn, cl, data in sorted(byrow.get(i, [])):
+            if cl in ('J', 'K', 'L'):
+                sell.append(data)
+            elif cl == 'M':
+                mother.append(data)
+            elif cl == 'N':
+                father.append(data)
+            else:
+                sell.append(data)
+        t['photos'] = {'sell': sell, 'mother': mother, 'father': father}
+        items.append(t)
+    return items
 
 
 @app.route('/api/zong/list', methods=['GET'])
@@ -3109,11 +3220,23 @@ def zong_list():
     rows = conn.execute(
         "SELECT item_no, num, code, variety, size, qty, krw, twd, usd, fb_url, fb_date, "
         "sold, COALESCE(dead,0) AS dead, COALESCE(holding,0) AS holding, "
-        "COALESCE(closed,0) AS closed, closed_date, buyer, rate, photo "
+        "COALESCE(closed,0) AS closed, closed_date, buyer, rate, photo, batch "
         "FROM zong_items ORDER BY num DESC"
     ).fetchall()
+    prows = conn.execute(
+        "SELECT item_no, kind, idx FROM zong_photos "
+        "ORDER BY item_no, CASE kind WHEN 'sell' THEN 0 WHEN 'mother' THEN 1 ELSE 2 END, idx"
+    ).fetchall()
     conn.close()
-    return jsonify([dict(r) for r in rows])
+    pmap = {}
+    for pr in prows:
+        pmap.setdefault(pr['item_no'], []).append({'kind': pr['kind'], 'idx': pr['idx']})
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['photos'] = pmap.get(r['item_no'], [])
+        out.append(d)
+    return jsonify(out)
 
 
 @app.route('/api/zong/add', methods=['POST'])
@@ -3154,6 +3277,59 @@ def zong_add():
     conn.close()
     logger.info("🌿 Zong 등록: %s" % item_no)
     return jsonify({'ok': True, 'item_no': item_no, 'total': total})
+
+
+@app.route('/api/zong/upload-excel', methods=['POST'])
+def zong_upload_excel():
+    f = request.files.get('file')
+    if not f:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    import tempfile
+    batch = os.path.splitext(f.filename or 'zong')[0]
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+    tmp.write(f.read())
+    tmp.close()
+    try:
+        items = _parse_zong_excel(tmp.name)
+    except Exception as e:
+        logger.exception("Zong 엑셀 파싱 실패")
+        return jsonify({'error': '엑셀 파싱 실패: %s' % e}), 400
+    if not items:
+        return jsonify({'error': '상품을 찾지 못했습니다 (엑셀 양식 확인)'}), 400
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    added = 0
+    skipped = 0
+    photo_total = 0
+    for it in items:
+        sig = '|'.join([it['code'], it['variety'], it['size'], str(it['won']), str(it['twd'])])
+        if conn.execute("SELECT 1 FROM zong_items WHERE sig=?", (sig,)).fetchone():
+            skipped += 1
+            continue
+        num = (conn.execute("SELECT COALESCE(MAX(num),0) AS m FROM zong_items").fetchone()['m'] or 0) + 1
+        item_no = "Z-%03d" % num
+        ph = it['photos']
+        main = (ph['sell'][:1] or ph['mother'][:1] or ph['father'][:1])
+        main_blob = _zshrink(main[0]) if main else None
+        conn.execute(
+            "INSERT INTO zong_items (item_no,num,code,variety,size,qty,krw,twd,usd,fb_url,fb_date,"
+            "sold,dead,holding,closed,rate,photo,img,batch,sig,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,36,?,?,?,?,?)",
+            (item_no, num, it['code'], it['variety'], it['size'], it['qty'],
+             it['won'], it['twd'], 0.0, '', it['date'], item_no + '.jpg',
+             (sqlite3.Binary(main_blob) if main_blob else None), batch, sig, now_kst().isoformat()))
+        for kind in ('sell', 'mother', 'father'):
+            for idx, raw in enumerate(ph[kind]):
+                b = _zshrink(raw)
+                conn.execute("INSERT OR REPLACE INTO zong_photos (item_no,kind,idx,img) VALUES (?,?,?,?)",
+                             (item_no, kind, idx, sqlite3.Binary(b)))
+                photo_total += 1
+        added += 1
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) AS c FROM zong_items").fetchone()['c']
+    conn.close()
+    logger.info("🌿 Zong 엑셀: 신규 %d, 중복 %d, 사진 %d (batch=%s)" % (added, skipped, photo_total, batch))
+    return jsonify({'ok': True, 'added': added, 'skipped': skipped, 'photos': photo_total, 'total': total, 'batch': batch})
 
 
 @app.route('/api/zong/update', methods=['POST'])
@@ -3200,6 +3376,7 @@ def zong_delete():
     conn = get_conn()
     _ensure_zong_table(conn)
     n = conn.execute("DELETE FROM zong_items WHERE item_no=?", (ino,)).rowcount
+    conn.execute("DELETE FROM zong_photos WHERE item_no=?", (ino,))
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'deleted': n})
@@ -3210,13 +3387,31 @@ def zong_photo(item_no):
     import io as _io
     conn = get_conn()
     _ensure_zong_table(conn)
-    row = conn.execute("SELECT img FROM zong_items WHERE item_no=?", (item_no,)).fetchone()
+    row = conn.execute(
+        "SELECT img FROM zong_photos WHERE item_no=? "
+        "ORDER BY CASE kind WHEN 'sell' THEN 0 WHEN 'mother' THEN 1 ELSE 2 END, idx LIMIT 1",
+        (item_no,)).fetchone()
+    if row is None or not row['img']:
+        row = conn.execute("SELECT img FROM zong_items WHERE item_no=?", (item_no,)).fetchone()
     conn.close()
     if row is not None and row['img']:
         return send_file(_io.BytesIO(row['img']), mimetype='image/jpeg')
     p = os.path.join(_zong_dir(), item_no + '.jpg')
     if os.path.exists(p):
         return send_file(p, mimetype='image/jpeg')
+    return ('', 404)
+
+
+@app.route('/api/zong/photo/<path:item_no>/<kind>/<int:idx>', methods=['GET'])
+def zong_photo_kind(item_no, kind, idx):
+    import io as _io
+    conn = get_conn()
+    _ensure_zong_table(conn)
+    row = conn.execute("SELECT img FROM zong_photos WHERE item_no=? AND kind=? AND idx=?",
+                       (item_no, kind, idx)).fetchone()
+    conn.close()
+    if row is not None and row['img']:
+        return send_file(_io.BytesIO(row['img']), mimetype='image/jpeg')
     return ('', 404)
 
 

@@ -940,6 +940,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <h3>🌿 Zong <span style="font-weight:400;font-size:13px;color:var(--muted);">黃宗禮 위탁 상품 / Zong consigned items</span></h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <input type="text" id="zongSearch" oninput="renderZong()" placeholder="🔍 코드/품종 검색 / Search" style="padding:6px 10px;font-size:14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text);width:210px;">
+        <input type="file" id="zongExcelInput" accept=".xlsx" style="display:none;" onchange="zongUploadExcel(this.files)">
+        <button class="btn btn-primary" id="zongExcelBtn" onclick="document.getElementById('zongExcelInput').click()" title="Zong 리스트 엑셀 업로드(누적, 사진 자동 포함)">⬆ 엑셀 업로드 (Upload Excel)</button>
         <button class="btn" id="zongCloseBtn" style="background:#b45309;color:#fff;" onclick="zongCloseMonth()" title="판매 체크된 상품을 오늘 날짜로 정산완료 처리">📅 월 마감 (Close Month)</button>
         <label style="display:inline-flex;gap:5px;align-items:center;font-size:13px;color:var(--muted);cursor:pointer;"><input type="checkbox" id="zongShowClosed" onchange="renderZong()" style="cursor:pointer;"> 마감 항목 숨기기 (Hide closed)</label>
         <button class="btn btn-secondary" onclick="loadZong()">🔄 새로고침 (Refresh)</button>
@@ -3923,7 +3925,7 @@ const _ZPF = "font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',
 
 function applyZongPerms() {
   const ro = !!window._readOnly;
-  ['zongCloseBtn','ztab-add','zongRateBtns'].forEach(id => {
+  ['zongExcelBtn','zongCloseBtn','ztab-add','zongRateBtns'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = ro ? 'none' : '';
   });
   const note = document.getElementById('zongRoNote'); if (note) note.style.display = ro ? 'inline-flex' : 'none';
@@ -3976,8 +3978,11 @@ function renderZong() {
 
   const hideClosed = (document.getElementById('zongShowClosed')||{checked:false}).checked;
   const list = _zongFiltered().filter(x => hideClosed ? !x.closed : true);
-  if (!list.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">상품이 없습니다 / No items — ➕ 상품 등록</div>'; return; }
-  grid.innerHTML = list.map(x => {
+  if (!list.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">상품이 없습니다 / No items — ⬆ 엑셀 업로드 또는 ➕ 상품 등록</div>'; return; }
+  const groups = {};
+  list.forEach(x => { const k = x.batch || '__manual'; (groups[k]=groups[k]||[]).push(x); });
+  const keys = Object.keys(groups).sort().reverse();
+  const cardHtml = (x) => {
     const grey = (x.sold || x.dead || x.closed) ? ' shira-settled' : '';
     const url = `${API}/api/zong/photo/${encodeURIComponent(x.item_no)}`;
     let badge = '';
@@ -4000,11 +4005,12 @@ function renderZong() {
           ${badge}${holdTag}
         </div>
         <div style="padding:8px 10px;">
-          <div style="${_ZPF}font-size:13px;font-weight:700;line-height:1.25;">${_zesc(x.code)||'(코드 없음)'}</div>
-          ${x.variety? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${_zesc(x.variety)}</div>`:''}
+          <div style="${_ZPF}font-size:13px;font-weight:700;line-height:1.25;">${_zesc((x.code||'').replace(/\n+/g,' ').trim())||'(코드 없음)'}</div>
+          ${x.variety? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${_zesc((x.variety||'').replace(/\n+/g,' ').trim())}</div>`:''}
           ${(x.size||x.qty)? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${x.size?('크기 '+_zesc(x.size)):''}${(x.size&&x.qty)?' · ':''}${x.qty?('수량 '+_zesc(x.qty)):''}</div>`:''}
           <div style="${_ZPF}font-size:15px;color:var(--green);font-weight:700;margin-top:3px;">${_zfmt(x.krw)} 원</div>
           ${twdusd? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${twdusd}</div>`:''}
+          ${(x.photos&&x.photos.length>1)? `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${x.photos.map(p=>`<div style="position:relative;line-height:0;"><img src="${API}/api/zong/photo/${encodeURIComponent(x.item_no)}/${p.kind}/${p.idx}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:4px;cursor:zoom-in;" onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">${p.kind!=='sell'?`<span style="position:absolute;bottom:0;right:0;background:${p.kind==='mother'?'#db2777':'#2563eb'};color:#fff;font-size:8px;padding:0 3px;border-radius:3px;">${p.kind==='mother'?'♀M':'♂F'}</span>`:''}</div>`).join('')}</div>`:''}
           ${x.fb_date? `<div style="font-size:11px;color:#60a5fa;">#${_zesc(x.fb_date)}</div>`:''}
           ${fbLink? `<div style="margin-top:4px;">${fbLink}</div>`:''}
           <div style="display:flex;gap:10px;margin-top:6px;font-size:13px;flex-wrap:wrap;">
@@ -4016,7 +4022,15 @@ function renderZong() {
           ${RO ? '' : `<button onclick="zongDelete('${x.item_no}')" style="margin-top:8px;background:#7f1d1d;color:#fff;border:none;border-radius:5px;padding:4px 9px;font-size:12px;cursor:pointer;">🗑 삭제 / Delete</button>`}
         </div>
       </div>`;
-  }).join('');
+  };
+  let html = '';
+  for (const k of keys) {
+    const g = groups[k];
+    const label = (k === '__manual') ? '✍ 직접 등록 / Manual (페북)' : `📄 ${k}`;
+    html += `<div style="grid-column:1/-1;margin:8px 0 2px;font-weight:700;font-size:15px;border-bottom:2px solid var(--green);padding-bottom:4px;">${label} <span style="color:var(--muted);font-weight:400;font-size:12px;">· ${g.length}건</span></div>`;
+    html += g.map(cardHtml).join('');
+  }
+  grid.innerHTML = html;
 }
 
 function renderZongFee() {
@@ -4202,6 +4216,20 @@ async function zongAdd() {
     } else toast('오류: ' + (d.error||'실패'), 'err');
   } catch(e) { toast('서버 연결 실패', 'err'); }
   finally { if (btn) { btn.disabled=false; btn.innerHTML=o; } }
+}
+
+async function zongUploadExcel(files) {
+  if (!files || !files.length) return;
+  const btn = document.getElementById('zongExcelBtn'); const o = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 업로드·처리 중...'; }
+  try {
+    const fd = new FormData(); fd.append('file', files[0]);
+    const r = await fetch(API + '/api/zong/upload-excel', {method:'POST', body: fd});
+    const d = await r.json();
+    if (d.ok) { toast(`⬆ 엑셀 처리: 신규 ${d.added}건 · 중복 ${d.skipped} · 사진 ${d.photos}장 (누적 ${d.total})`, 'ok'); loadZong(); }
+    else toast('오류: ' + (d.error || '실패'), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+  finally { const fi = document.getElementById('zongExcelInput'); if (fi) fi.value=''; if (btn) { btn.disabled=false; btn.innerHTML=o; } }
 }
 
 (function(){
