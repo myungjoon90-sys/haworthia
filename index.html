@@ -949,10 +949,10 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       </div>
     </div>
     <div style="padding:0 16px 12px;display:flex;gap:20px;flex-wrap:wrap;font-size:14px;">
-      <span>판매(미정산) / Sold·unsettled <strong id="zong-sold-count" style="color:var(--green)">0</strong>건 · <strong id="zong-sold-krw" style="color:var(--green)">0</strong> 원</span>
+      <span>판매(미정산) / Sold·unsettled <strong id="zong-sold-count" style="color:var(--green)">0</strong>건 · <strong id="zong-sold-krw" style="color:var(--green)">0</strong> 원 · <strong id="zong-sold-twd" style="color:var(--green)">0</strong> TWD</span>
       <span style="color:#ef4444">죽음 / Dead <strong id="zong-dead-count" style="color:#ef4444">0</strong>건</span>
       <span style="color:var(--muted)">전체 / Total <strong id="zong-total-count">0</strong>건</span>
-      <span style="width:100%;border-top:1px dashed var(--border);margin-top:6px;padding-top:6px;">✅ 현재까지 정산완료 / Settled so far — <strong id="zong-settled-count" style="color:#9aa7b4">0</strong>건 · <strong id="zong-settled-krw" style="color:#f59e0b">0</strong> 원</span>
+      <span style="width:100%;border-top:1px dashed var(--border);margin-top:6px;padding-top:6px;">✅ 현재까지 정산완료 / Settled so far — <strong id="zong-settled-count" style="color:#9aa7b4">0</strong>건 · <strong id="zong-settled-krw" style="color:#f59e0b">0</strong> 원 · <strong id="zong-settled-twd" style="color:#f59e0b">0</strong> TWD</span>
     </div>
   </div>
 
@@ -2311,16 +2311,29 @@ const ZONG_PW = 'zong';     // Zong 탭 전용 비밀번호
 let _shiraAll = [];
 let _shiraTab = 'list';
 let _shiraHoverTimer = null;
+function _zoomOverlay() {
+  let z = document.getElementById('globalZoom');
+  if (!z) {
+    z = document.createElement('div'); z.id = 'globalZoom';
+    z.style.cssText = 'display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.88);align-items:center;justify-content:center;cursor:zoom-out;';
+    z.onclick = () => { z.style.display = 'none'; };
+    const img = document.createElement('img'); img.id = 'globalZoomImg';
+    img.style.cssText = 'max-width:94vw;max-height:94vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.6);';
+    z.appendChild(img); document.body.appendChild(z);
+  }
+  return z;
+}
+function zoomImg(src) {
+  if (!src) return;
+  const z = _zoomOverlay(); z.querySelector('img').src = src; z.style.display = 'flex';
+}
 function shiraHoverStart(imgEl) {
   clearTimeout(_shiraHoverTimer);
-  _shiraHoverTimer = setTimeout(() => {
-    const z = document.getElementById('shiraZoom'), zi = document.getElementById('shiraZoomImg');
-    if (z && zi) { zi.src = imgEl.src; z.style.display = 'flex'; }
-  }, 1000);
+  _shiraHoverTimer = setTimeout(() => { zoomImg(imgEl.src); }, 1000);
 }
 function shiraHoverEnd() {
   clearTimeout(_shiraHoverTimer);
-  const z = document.getElementById('shiraZoom'); if (z) z.style.display = 'none';
+  const z = document.getElementById('globalZoom'); if (z) z.style.display = 'none';
 }
 
 async function loadShira() {
@@ -3971,8 +3984,10 @@ function renderZong() {
   const deadList = _zongAll.filter(x => x.dead && !x.closed);
   document.getElementById('zong-sold-count').textContent = soldActive.length;
   document.getElementById('zong-sold-krw').textContent = _zfmt(soldActive.reduce((s,x)=>s+(x.krw||0),0));
+  { const e=document.getElementById('zong-sold-twd'); if(e) e.textContent = _zfmt(soldActive.reduce((s,x)=>s+(x.twd||0),0)); }
   document.getElementById('zong-settled-count').textContent = settledList.length;
   document.getElementById('zong-settled-krw').textContent = _zfmt(settledList.reduce((s,x)=>s+(x.krw||0),0));
+  { const e=document.getElementById('zong-settled-twd'); if(e) e.textContent = _zfmt(settledList.reduce((s,x)=>s+(x.twd||0),0)); }
   document.getElementById('zong-dead-count').textContent = deadList.length;
   document.getElementById('zong-total-count').textContent = _zongAll.length;
 
@@ -4010,7 +4025,7 @@ function renderZong() {
           ${(x.size||x.qty)? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${x.size?('크기 '+_zesc(x.size)):''}${(x.size&&x.qty)?' · ':''}${x.qty?('수량 '+_zesc(x.qty)):''}</div>`:''}
           <div style="${_ZPF}font-size:15px;color:var(--green);font-weight:700;margin-top:3px;">${_zfmt(x.krw)} 원</div>
           ${twdusd? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${twdusd}</div>`:''}
-          ${(x.photos&&x.photos.length>1)? `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${x.photos.map(p=>`<div style="position:relative;line-height:0;"><img src="${API}/api/zong/photo/${encodeURIComponent(x.item_no)}/${p.kind}/${p.idx}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:4px;cursor:zoom-in;" onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">${p.kind!=='sell'?`<span style="position:absolute;bottom:0;right:0;background:${p.kind==='mother'?'#db2777':'#2563eb'};color:#fff;font-size:8px;padding:0 3px;border-radius:3px;">${p.kind==='mother'?'♀M':'♂F'}</span>`:''}</div>`).join('')}</div>`:''}
+          ${(x.photos&&x.photos.length>1)? `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${x.photos.map(p=>`<div style="position:relative;line-height:0;"><img src="${API}/api/zong/photo/${encodeURIComponent(x.item_no)}/${p.kind}/${p.idx}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:4px;cursor:zoom-in;" onclick="zoomImg(this.src)" onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">${p.kind!=='sell'?`<span style="position:absolute;bottom:0;right:0;background:${p.kind==='mother'?'#db2777':'#2563eb'};color:#fff;font-size:8px;padding:0 3px;border-radius:3px;">${p.kind==='mother'?'♀M':'♂F'}</span>`:''}</div>`).join('')}</div>`:''}
           ${x.fb_date? `<div style="font-size:11px;color:#60a5fa;">#${_zesc(x.fb_date)}</div>`:''}
           ${fbLink? `<div style="margin-top:4px;">${fbLink}</div>`:''}
           <div style="display:flex;gap:10px;margin-top:6px;font-size:13px;flex-wrap:wrap;">
