@@ -676,7 +676,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
   <div id="inner-confirmed" style="display:none;">
     <div class="card">
       <div class="card-head">
-        <h3>✅ 입금확인 완료</h3>
+        <h3>✅ 입금확인 완료 <span style="font-size:12px;font-weight:400;color:#7ee2a8;border:1px solid #2e6b46;border-radius:4px;padding:1px 6px;margin-left:4px;">주소입력판 v68</span></h3>
+        <p style="width:100%;margin:2px 16px 0;font-size:12px;color:var(--muted);">💡 각 주문자 이름 아래 <b>이름·전화번호·주소</b> 칸에 입력하면 회원명단에 자동 저장됩니다.</p>
         <div style="display:flex;gap:8px;">
           <button class="btn" style="background:#16a34a;color:#fff;" onclick="shipAllConfirmed()">🚚 전체 배송완료</button>
           <button class="btn btn-blue" onclick="downloadDeliveryExcel()">⬇ 엑셀 다운로드</button>
@@ -1472,19 +1473,21 @@ async function loadAutoPage() {
   const sid = document.getElementById('autoSessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
   try {
-    const [pendingRes, confirmedRes, sessionsRes, candRes, statusRes] = await Promise.all([
+    const [pendingRes, confirmedRes, sessionsRes, candRes, statusRes, membersRes] = await Promise.all([
       fetch(API + '/api/orders/pending' + qs),
       fetch(API + '/api/orders/confirmed' + qs),
       fetch(API + '/api/sessions'),
       fetch(API + '/api/candidates' + qs),
       // 보관 상태: 세션 선택돼 있으면 그 세션만, 아니면 전체
-      sid ? fetch(API + '/api/buyer/status?session_id=' + sid) : fetch(API + '/api/buyer/status')
+      sid ? fetch(API + '/api/buyer/status?session_id=' + sid) : fetch(API + '/api/buyer/status'),
+      fetch(API + '/api/members/list')
     ]);
     const pending    = await pendingRes.json();
     const confirmed  = await confirmedRes.json();
     const sessions   = await sessionsRes.json();
     const candidates = await candRes.json();
     const statusData = await statusRes.json();
+    try { const md = await membersRes.json(); window._memberMap = {}; for (const m of (md||[])) window._memberMap[m.name] = m; } catch(e) { window._memberMap = window._memberMap||{}; }
 
     // statusData: 세션 선택 시 → {buyer:status} / 미선택 → [{session_id,buyer_name,status}]
     _storedMap = {};
@@ -1650,6 +1653,19 @@ function renderAllOrders(pending, confirmed) {
         <td></td>
       </tr>`;
 }
+async function quickSaveMember(buyer, el) {
+  const box = el.closest('.qs-box'); if (!box) return;
+  const g = (f) => { const i = box.querySelector('[data-f="'+f+'"]'); return i ? i.value.trim() : ''; };
+  const name = g('name') || buyer, phone = g('phone'), address = g('address');
+  const st = box.querySelector('.qs-status'); if (st) { st.textContent = '저장 중...'; st.style.color = 'var(--muted)'; }
+  try {
+    const r = await fetch(API + '/api/members/quick-save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({buyer_name: buyer, name, phone, address})});
+    const d = await r.json();
+    if (d.ok) { if (st) { st.textContent = '✓ 회원명단 저장됨'; st.style.color = 'var(--green)'; } window._memberMap = window._memberMap||{}; window._memberMap[name] = {name, phone, address}; if (name!==buyer) window._memberMap[buyer] = {name, phone, address}; }
+    else if (st) { st.textContent = '오류: ' + (d.error||''); st.style.color = 'var(--red)'; }
+  } catch(e) { if (st) { st.textContent = '저장 실패(서버)'; st.style.color = 'var(--red)'; } }
+}
+
 function renderConfirmed(items) {
   const tbody = document.getElementById('confirmedTbody');
   const storedTbody = document.getElementById('storedConfirmedTbody');
@@ -1667,8 +1683,18 @@ function renderConfirmed(items) {
   else { storedBadge.classList.remove('show'); storedBadge.textContent = ''; }
 
   const payLabel = {card:'카드결제', transfer:'계좌이체', manual:'수동확인', '':'-'};
+  const _ea = (v) => String(v==null?'':v).replace(/"/g,'&quot;');
   const fmt = (i, mode) => {
     const safeBuyer = (i.buyer_name||'').replace(/['"\\]/g, '');
+    const mem = (window._memberMap && window._memberMap[i.buyer_name]) || {};
+    const _ist = "padding:4px 6px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:5px;color:var(--text);width:100%;box-sizing:border-box;";
+    const qsBox = (mode === 'normal') ? `
+        <div class="qs-box" style="margin-top:6px;display:flex;flex-direction:column;gap:3px;max-width:240px;">
+          <input data-f="name" value="${_ea(i.buyer_name)}" onchange="quickSaveMember('${safeBuyer}',this)" placeholder="이름" style="${_ist}">
+          <input data-f="phone" value="${_ea(mem.phone)}" onchange="quickSaveMember('${safeBuyer}',this)" placeholder="전화번호" style="${_ist}">
+          <input data-f="address" value="${_ea(mem.address)}" onchange="quickSaveMember('${safeBuyer}',this)" placeholder="주소" style="${_ist}">
+          <span class="qs-status" style="font-size:10px;color:var(--muted);"></span>
+        </div>` : '';
     let btn;
     if (mode === 'stored') {
       btn = `<button class="btn" style="padding:4px 10px;background:#6b7280;color:#fff;" onclick="unstoreConfirmedBuyer(${i.session_id}, '${safeBuyer}')" title="보관 해제 → 입금확인 탭으로 복귀">↩️ 복귀</button>`;
@@ -1686,7 +1712,7 @@ function renderConfirmed(items) {
     }
     return `
       <tr>
-        <td><strong>${i.buyer_name}</strong><br><span style="font-size:11px;color:var(--muted);">📅 ${i.live_date||'-'}</span></td>
+        <td><strong>${i.buyer_name}</strong><br><span style="font-size:11px;color:var(--muted);">📅 ${i.live_date||'-'}</span>${qsBox}</td>
         <td style="font-size:12px;color:var(--muted);max-width:300px;white-space:normal;word-break:break-all;">${i.items||'-'}</td>
         <td style="font-family:'DM Mono',monospace;color:var(--green);">${Number(i.total_amount).toLocaleString()}원</td>
         <td><span class="badge badge-${i.pay_type||'transfer'}">${payLabel[i.pay_type]||'-'}</span></td>
@@ -2316,10 +2342,14 @@ function _zoomOverlay() {
   if (!z) {
     z = document.createElement('div'); z.id = 'globalZoom';
     z.style.cssText = 'display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.88);align-items:center;justify-content:center;cursor:zoom-out;';
-    z.onclick = () => { z.style.display = 'none'; };
+    z.onclick = () => { z.style.display = 'none'; };   // 배경 클릭 → 닫힘
     const img = document.createElement('img'); img.id = 'globalZoomImg';
     img.style.cssText = 'max-width:94vw;max-height:94vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.6);';
-    z.appendChild(img); document.body.appendChild(z);
+    img.onclick = (e) => { e.stopPropagation(); };
+    const xbtn = document.createElement('div'); xbtn.textContent = '✕'; xbtn.title = '닫기';
+    xbtn.style.cssText = 'position:fixed;top:14px;right:22px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);color:#fff;font-size:26px;border-radius:50%;cursor:pointer;z-index:100000;user-select:none;';
+    xbtn.onclick = (e) => { e.stopPropagation(); z.style.display = 'none'; };
+    z.appendChild(img); z.appendChild(xbtn); document.body.appendChild(z);
   }
   return z;
 }
@@ -2413,10 +2443,9 @@ function renderShira() {
       return `
       <div class="shira-card${grey}" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
         <div style="position:relative;background:#000;">
-          <img src="${url}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;cursor:${RO?'zoom-in':'pointer'};"
-               title="${RO?'1초 올려두면 크게 보기 / hold 1s to zoom':'클릭: 판매 체크 · 1초 올려두면 크게 보기 / Click: mark Sold · hold 1s to zoom'}"
-               ${RO ? '' : `onclick="shiraToggle('${x.item_no}','sold',${x.sold ? 'false' : 'true'})"`}
-               onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()"
+          <img src="${url}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;cursor:zoom-in;"
+               title="클릭하면 크게 보기 / Click to zoom"
+               onclick="zoomImg(this.src)"
                onerror="this.style.display='none'">
           <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
           ${badge}${holdTag}
@@ -2575,7 +2604,7 @@ function renderShiraHold() {
       <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
         <div style="position:relative;background:#000;">
           <img src="${url}" loading="lazy" style="width:100%;height:170px;object-fit:cover;display:block;cursor:zoom-in;"
-               onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">
+               onclick="zoomImg(this.src)" onerror="this.style.display='none'">
           <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
           <span style="position:absolute;top:6px;right:6px;background:#7c3aed;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">📦 보관중 Held</span>
         </div>
@@ -4012,10 +4041,9 @@ function renderZong() {
     return `
       <div class="shira-card${grey}" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
         <div style="position:relative;background:#000;">
-          <img src="${url}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;cursor:${RO?'zoom-in':'pointer'};"
-               title="${RO?'1초 올려두면 크게 보기':'클릭: 판매 체크 · 1초 올려두면 크게 보기'}"
-               ${RO ? '' : `onclick="zongToggle('${x.item_no}','sold',${x.sold ? 'false' : 'true'})"`}
-               onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">
+          <img src="${url}" loading="lazy" style="width:100%;height:180px;object-fit:cover;display:block;cursor:zoom-in;"
+               title="클릭하면 크게 보기 / Click to zoom"
+               onclick="zoomImg(this.src)" onerror="this.style.display='none'">
           <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
           ${badge}${holdTag}
         </div>
@@ -4025,7 +4053,7 @@ function renderZong() {
           ${(x.size||x.qty)? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${x.size?('크기 '+_zesc(x.size)):''}${(x.size&&x.qty)?' · ':''}${x.qty?('수량 '+_zesc(x.qty)):''}</div>`:''}
           <div style="${_ZPF}font-size:15px;color:var(--green);font-weight:700;margin-top:3px;">${_zfmt(x.krw)} 원</div>
           ${twdusd? `<div style="${_ZPF}font-size:12px;color:var(--muted);">${twdusd}</div>`:''}
-          ${(x.photos&&x.photos.length>1)? `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${x.photos.map(p=>`<div style="position:relative;line-height:0;"><img src="${API}/api/zong/photo/${encodeURIComponent(x.item_no)}/${p.kind}/${p.idx}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:4px;cursor:zoom-in;" onclick="zoomImg(this.src)" onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">${p.kind!=='sell'?`<span style="position:absolute;bottom:0;right:0;background:${p.kind==='mother'?'#db2777':'#2563eb'};color:#fff;font-size:8px;padding:0 3px;border-radius:3px;">${p.kind==='mother'?'♀M':'♂F'}</span>`:''}</div>`).join('')}</div>`:''}
+          ${(x.photos&&x.photos.length>1)? `<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">${x.photos.map(p=>`<div style="position:relative;line-height:0;"><img src="${API}/api/zong/photo/${encodeURIComponent(x.item_no)}/${p.kind}/${p.idx}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:4px;cursor:zoom-in;" onclick="zoomImg(this.src)" onerror="this.style.display='none'">${p.kind!=='sell'?`<span style="position:absolute;bottom:0;right:0;background:${p.kind==='mother'?'#db2777':'#2563eb'};color:#fff;font-size:8px;padding:0 3px;border-radius:3px;">${p.kind==='mother'?'♀M':'♂F'}</span>`:''}</div>`).join('')}</div>`:''}
           ${x.fb_date? `<div style="font-size:11px;color:#60a5fa;">#${_zesc(x.fb_date)}</div>`:''}
           ${fbLink? `<div style="margin-top:4px;">${fbLink}</div>`:''}
           <div style="display:flex;gap:10px;margin-top:6px;font-size:13px;flex-wrap:wrap;">
@@ -4115,7 +4143,7 @@ function renderZongHold() {
     return `
       <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);">
         <div style="position:relative;background:#000;">
-          <img src="${url}" loading="lazy" style="width:100%;height:170px;object-fit:cover;display:block;cursor:zoom-in;" onmouseenter="shiraHoverStart(this)" onmouseleave="shiraHoverEnd()" onerror="this.style.display='none'">
+          <img src="${url}" loading="lazy" style="width:100%;height:170px;object-fit:cover;display:block;cursor:zoom-in;" onclick="zoomImg(this.src)" onerror="this.style.display='none'">
           <span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">${x.item_no}</span>
           <span style="position:absolute;top:6px;right:6px;background:#7c3aed;color:#fff;font-size:11px;padding:2px 7px;border-radius:4px;">📦 보관중 Held</span>
         </div>
