@@ -958,7 +958,10 @@ def download_delivery_excel():
            "SUM(o.amount) AS total_amount, MIN(o.pay_type) AS pay_type, "
            "MAX(o.confirmed_at) AS confirmed_at, ls.live_date "
            "FROM orders o JOIN live_sessions ls ON o.session_id=ls.id "
-           "WHERE o.status='confirmed'")
+           "WHERE o.status='confirmed' "
+           "AND NOT EXISTS (SELECT 1 FROM buyer_status bs "
+           "WHERE bs.session_id=o.session_id AND bs.buyer_name=o.buyer_name "
+           "AND bs.status IN ('shipped','stored'))")
     params = []
     if session_id:
         sql += " AND o.session_id=?"
@@ -1134,6 +1137,44 @@ def members_upload():
         conn.close()
     logger.info(f"📇 회원명단 import: 추가 {added}, 수정 {updated}, 스킵 {skipped}")
     return jsonify({'ok': True, 'added': added, 'updated': updated, 'skipped': skipped})
+
+
+@app.route('/api/members/quick-save', methods=['POST'])
+def members_quick_save():
+    """입금확인 화면에서 이름/전화/주소를 바로 회원명단에 저장(업서트).
+       닉네임(buyer_name)과 이름이 다르면 닉네임 매핑도 자동 생성 → 배송목록 엑셀 자동 연결."""
+    data = request.get_json(silent=True) or {}
+    buyer = (data.get('buyer_name') or '').strip()
+    name = (data.get('name') or buyer).strip()
+    phone = (data.get('phone') or '').strip()
+    address = (data.get('address') or '').strip()
+    postal = (data.get('postal_code') or '').strip()
+    message = (data.get('message') or '').strip()
+    if not name:
+        return jsonify({'error': '이름이 비어있습니다'}), 400
+    conn = get_conn()
+    # 기존값 병합(빈칸이면 기존 유지 → 우편번호/메세지 등 보존)
+    ex = conn.execute("SELECT * FROM members WHERE name=?", (name,)).fetchone()
+    ex = dict(ex) if ex else {}
+    phone = phone or ex.get('phone', '') or ''
+    address = address or ex.get('address', '') or ''
+    postal = postal or ex.get('postal_code', '') or ''
+    message = message or ex.get('message', '') or ''
+    conn.execute(
+        "INSERT OR REPLACE INTO members (name, phone, postal_code, address, message, updated_at) "
+        "VALUES (?,?,?,?,?,?)",
+        (name, phone, postal, address, message, now_kst().isoformat()))
+    if buyer and name and buyer != name:
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO nick_mappings (nickname, realname, negative) VALUES (?, ?, 0)",
+                (buyer, name))
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+    logger.info("📇 회원 즉시저장: %s (닉네임 %s)" % (name, buyer))
+    return jsonify({'ok': True, 'name': name})
 
 
 @app.route('/api/members/download', methods=['GET'])
