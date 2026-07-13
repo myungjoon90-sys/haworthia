@@ -460,6 +460,8 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <button class="btn" style="background:#2563eb;color:#fff;padding:6px 12px;" onclick="backupAll()" title="모든 데이터를 파일 하나로 백업">💾 전체 백업</button>
       <input type="file" id="restoreFileInput" accept=".db,.sqlite,.sqlite3" style="display:none;" onchange="restoreAll(this.files)">
       <button class="btn" style="background:#6b7280;color:#fff;padding:6px 12px;" onclick="document.getElementById('restoreFileInput').click()" title="백업 파일로 전체 복원">♻ 복원</button>
+      <button class="btn" style="background:#7c3aed;color:#fff;padding:6px 12px;" onclick="emailBackupNow()" title="지금 전체 백업을 Gmail로 전송(테스트). 매주 일요일 23시에 자동 전송됩니다.">📧 메일백업 테스트</button>
+      <span id="backupEmailInfo" style="font-size:11px;color:var(--muted);align-self:center;"></span>
     </span>
     <span id="loginWho" style="font-size:13px;color:var(--muted);"></span>
     <button id="logoutBtn" class="btn" style="background:#444;color:#fff;padding:6px 12px;display:none;" onclick="doLogout()">로그아웃 (Logout)</button>
@@ -831,6 +833,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
         <button class="btn btn-primary" id="imwebImportBtn" onclick="imwebImport()" title="아임웹 쇼핑 주문 중 20만원 이상을 구매이력에 추가">📥 아임웹 20만↑ 가져오기</button>
         <input type="file" id="bankFileInput" accept=".xls,.xlsx" multiple style="display:none;" onchange="bankImport(this.files)">
         <button class="btn" id="bankImportBtn" style="background:#0f9d58;color:#fff;" onclick="document.getElementById('bankFileInput').click()" title="국민/농협 입출금 엑셀을 올리면 입금건을 이름별로 구매이력에 합산">🏦 은행입금 합산</button>
+        <span id="bankLastInfo" style="font-size:12px;color:var(--muted);align-self:center;"></span>
       </div>
     </div>
     <p style="font-size:13px;color:var(--muted);margin:0 16px 6px;">💡 구매자 닉네임 또는 상품명으로 검색하세요. 지금까지의 모든 구매 내역(상품·단가 포함)입니다.</p>
@@ -1347,6 +1350,7 @@ async function checkServer(showToast) {
       document.getElementById('serverDot').classList.add('on');
       document.getElementById('serverLabel').textContent = '서버 연결됨 (Online)';
       if (showToast) { toast('✅ 서버 연결 확인됨', 'ok'); updateGuideBanner(true); }
+      try { loadBackupEmailLast(); } catch(e) {}
       return true;
     }
   } catch(e) {}
@@ -1473,14 +1477,15 @@ async function loadAutoPage() {
   const sid = document.getElementById('autoSessionFilter').value;
   const qs = sid ? '?session_id=' + sid : '';
   try {
-    const [pendingRes, confirmedRes, sessionsRes, candRes, statusRes, membersRes] = await Promise.all([
+    const [pendingRes, confirmedRes, sessionsRes, candRes, statusRes, membersRes, mappingsRes] = await Promise.all([
       fetch(API + '/api/orders/pending' + qs),
       fetch(API + '/api/orders/confirmed' + qs),
       fetch(API + '/api/sessions'),
       fetch(API + '/api/candidates' + qs),
       // 보관 상태: 세션 선택돼 있으면 그 세션만, 아니면 전체
       sid ? fetch(API + '/api/buyer/status?session_id=' + sid) : fetch(API + '/api/buyer/status'),
-      fetch(API + '/api/members/list')
+      fetch(API + '/api/members/list'),
+      fetch(API + '/api/mappings')
     ]);
     const pending    = await pendingRes.json();
     const confirmed  = await confirmedRes.json();
@@ -1488,6 +1493,7 @@ async function loadAutoPage() {
     const candidates = await candRes.json();
     const statusData = await statusRes.json();
     try { const md = await membersRes.json(); window._memberMap = {}; for (const m of (md||[])) window._memberMap[m.name] = m; } catch(e) { window._memberMap = window._memberMap||{}; }
+    try { const nm = await mappingsRes.json(); window._nick2real = {}; for (const r of (nm||[])) { if (!r.negative && r.nickname && r.realname) window._nick2real[r.nickname] = r.realname; } } catch(e) { window._nick2real = window._nick2real||{}; }
 
     // statusData: 세션 선택 시 → {buyer:status} / 미선택 → [{session_id,buyer_name,status}]
     _storedMap = {};
@@ -1653,6 +1659,13 @@ function renderAllOrders(pending, confirmed) {
         <td></td>
       </tr>`;
 }
+function resolveMember(buyer) {
+  const mm = window._memberMap||{}, n2r = window._nick2real||{};
+  if (mm[buyer]) return mm[buyer];
+  const real = n2r[buyer];
+  if (real && mm[real]) return mm[real];
+  return null;
+}
 async function quickSaveMember(buyer, el) {
   const box = el.closest('.qs-box'); if (!box) return;
   const g = (f) => { const i = box.querySelector('[data-f="'+f+'"]'); return i ? i.value.trim() : ''; };
@@ -1661,7 +1674,7 @@ async function quickSaveMember(buyer, el) {
   try {
     const r = await fetch(API + '/api/members/quick-save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({buyer_name: buyer, name, phone, address})});
     const d = await r.json();
-    if (d.ok) { if (st) { st.textContent = '✓ 회원명단 저장됨'; st.style.color = 'var(--green)'; } window._memberMap = window._memberMap||{}; window._memberMap[name] = {name, phone, address}; if (name!==buyer) window._memberMap[buyer] = {name, phone, address}; }
+    if (d.ok) { if (st) { st.textContent = '✓ 회원명단 저장됨'; st.style.color = 'var(--green)'; } window._memberMap = window._memberMap||{}; window._nick2real = window._nick2real||{}; window._memberMap[name] = {name, phone, address}; if (name!==buyer) window._nick2real[buyer] = name; }
     else if (st) { st.textContent = '오류: ' + (d.error||''); st.style.color = 'var(--red)'; }
   } catch(e) { if (st) { st.textContent = '저장 실패(서버)'; st.style.color = 'var(--red)'; } }
 }
@@ -1686,11 +1699,12 @@ function renderConfirmed(items) {
   const _ea = (v) => String(v==null?'':v).replace(/"/g,'&quot;');
   const fmt = (i, mode) => {
     const safeBuyer = (i.buyer_name||'').replace(/['"\\]/g, '');
-    const mem = (window._memberMap && window._memberMap[i.buyer_name]) || {};
+    const mem = resolveMember(i.buyer_name) || {};
+    const _nmVal = mem.name || i.buyer_name;
     const _ist = "padding:4px 6px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:5px;color:var(--text);width:100%;box-sizing:border-box;";
     const qsBox = (mode === 'normal') ? `
         <div class="qs-box" style="margin-top:6px;display:flex;flex-direction:column;gap:3px;max-width:240px;">
-          <input data-f="name" value="${_ea(i.buyer_name)}" onchange="quickSaveMember('${safeBuyer}',this)" placeholder="이름" style="${_ist}">
+          <input data-f="name" value="${_ea(_nmVal)}" onchange="quickSaveMember('${safeBuyer}',this)" placeholder="이름" style="${_ist}">
           <input data-f="phone" value="${_ea(mem.phone)}" onchange="quickSaveMember('${safeBuyer}',this)" placeholder="전화번호" style="${_ist}">
           <input data-f="address" value="${_ea(mem.address)}" onchange="quickSaveMember('${safeBuyer}',this)" placeholder="주소" style="${_ist}">
           <span class="qs-status" style="font-size:10px;color:var(--muted);"></span>
@@ -1795,6 +1809,14 @@ async function deleteConfirmedBuyer(sid, buyer) {
 // 🧾 구매 이력 (닉네임/상품명 검색, 총 합계)
 let _historyAll = [];
 let _historyTimer = null;
+function setBankLast(ts) {
+  const el = document.getElementById('bankLastInfo'); if (!el) return;
+  if (ts) { const t = String(ts).slice(0,16).replace('T',' '); el.textContent = `🕓 마지막 은행합산: ${t}`; }
+  else { el.textContent = ''; }
+}
+async function loadBankLast() {
+  try { const r = await fetch(API + '/api/bank/last-import'); const d = await r.json(); setBankLast(d.last); } catch(e) {}
+}
 async function bankImport(files) {
   if (!files || !files.length) return;
   const btn = document.getElementById('bankImportBtn');
@@ -1805,7 +1827,7 @@ async function bankImport(files) {
     for (const f of files) fd.append('files', f);
     const r = await fetch(API + '/api/bank/import-history', {method:'POST', body: fd});
     const d = await r.json();
-    if (d.ok) { toast(`🏦 은행입금 ${d.added}건 추가 (스캔 ${d.scanned}, 누적 ${d.total})`, 'ok'); loadHistory(); }
+    if (d.ok) { toast(`🏦 은행입금 ${d.added}건 추가 (스캔 ${d.scanned}, 누적 ${d.total})`, 'ok'); setBankLast(d.last); loadHistory(); }
     else toast('오류: ' + (d.error || '실패'), 'err');
   } catch(e) { toast('서버 연결 실패', 'err'); }
   finally {
@@ -1845,6 +1867,7 @@ async function deleteHistoryBuyer(name) {
   } catch(e) { toast('서버 연결 실패', 'err'); }
 }
 async function loadHistory() {
+  loadBankLast();
   const box = document.getElementById('historyContainer');
   if (box) box.innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px;">불러오는 중...</div>';
   try {
@@ -3923,6 +3946,23 @@ async function testSms() {
 // ══════════════════════════════════════════════════════════════════
 //  Toast
 // ══════════════════════════════════════════════════════════════════
+function setBackupEmailLast(ts) {
+  const el = document.getElementById('backupEmailInfo'); if (!el) return;
+  el.textContent = ts ? ('📧 마지막 메일백업: ' + String(ts).slice(0,16).replace('T',' ')) : '';
+}
+async function loadBackupEmailLast() {
+  try { const r = await fetch(API + '/api/backup/email-last'); const d = await r.json(); setBackupEmailLast(d.last); } catch(e) {}
+}
+async function emailBackupNow() {
+  if (!confirm('지금 전체 백업을 Gmail로 보낼까요?\n(Railway 환경변수 BACKUP_EMAIL_USER / BACKUP_EMAIL_PASS 설정이 되어 있어야 합니다.)')) return;
+  toast('📧 메일 전송 중...', 'ok');
+  try {
+    const r = await fetch(API + '/api/backup/email-now', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) { toast('📧 ' + d.message, 'ok'); setBackupEmailLast(d.last); }
+    else toast('실패: ' + (d.message||''), 'err');
+  } catch(e) { toast('서버 연결 실패', 'err'); }
+}
 function backupAll() {
   const a = document.createElement('a');
   a.href = API + '/api/backup/db';

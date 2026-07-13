@@ -661,6 +661,76 @@ def backup_db():
                      mimetype='application/octet-stream')
 
 
+def _make_backup_bytes():
+    import tempfile, sqlite3
+    conn = get_conn()
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db'); tmp.close()
+        dst = sqlite3.connect(tmp.name)
+        with dst:
+            conn.backup(dst)
+        dst.close()
+    finally:
+        conn.close()
+    with open(tmp.name, 'rb') as f:
+        data = f.read()
+    try:
+        os.remove(tmp.name)
+    except Exception:
+        pass
+    return data, "haworthia_backup_%s.db" % now_kst().strftime('%Y%m%d_%H%M')
+
+
+def send_backup_email():
+    """전체 백업(.db)을 Gmail로 첨부 전송. 환경변수 BACKUP_EMAIL_USER/PASS/TO 사용."""
+    import smtplib, ssl
+    from email.message import EmailMessage
+    user = os.environ.get('BACKUP_EMAIL_USER') or os.environ.get('GMAIL_USER')
+    pw = os.environ.get('BACKUP_EMAIL_PASS') or os.environ.get('GMAIL_APP_PASSWORD')
+    to = os.environ.get('BACKUP_EMAIL_TO') or user
+    if not user or not pw:
+        logger.warning("📧 백업메일: 환경변수(BACKUP_EMAIL_USER/BACKUP_EMAIL_PASS) 미설정")
+        return False, '환경변수 BACKUP_EMAIL_USER / BACKUP_EMAIL_PASS 를 먼저 설정하세요'
+    try:
+        data, fname = _make_backup_bytes()
+    except Exception as e:
+        logger.exception("백업 생성 실패")
+        return False, '백업 생성 실패: %s' % e
+    if len(data) > 24 * 1024 * 1024:
+        logger.warning("📧 백업메일: 파일이 24MB 초과(%d) — Gmail 첨부 한계" % len(data))
+        return False, '백업 파일이 24MB를 넘어 메일 첨부가 어렵습니다(구글 드라이브 방식 권장). 현재 %.1fMB' % (len(data)/1024/1024)
+    msg = EmailMessage()
+    ts = now_kst().strftime('%Y-%m-%d %H:%M')
+    msg['Subject'] = '[지양하월시아] 전체 백업 %s' % ts
+    msg['From'] = user
+    msg['To'] = to
+    msg.set_content('지양하월시아 입금확인 시스템 자동 백업입니다.\n첨부된 .db 파일을 보관하세요.\n생성: %s (KST)' % ts)
+    msg.add_attachment(data, maintype='application', subtype='octet-stream', filename=fname)
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP('smtp.gmail.com', 587, timeout=60) as srv:
+            srv.starttls(context=ctx)
+            srv.login(user, pw)
+            srv.send_message(msg)
+        _set_meta('backup_email_last', now_kst().isoformat())
+        logger.info("📧 백업메일 전송 완료 → %s (%d bytes)" % (to, len(data)))
+        return True, '전송 완료 → %s (%.1fMB)' % (to, len(data)/1024/1024)
+    except Exception as e:
+        logger.exception("백업메일 전송 실패")
+        return False, '전송 실패: %s' % e
+
+
+@app.route('/api/backup/email-now', methods=['POST'])
+def backup_email_now():
+    ok, message = send_backup_email()
+    return jsonify({'ok': ok, 'message': message, 'last': _get_meta('backup_email_last')})
+
+
+@app.route('/api/backup/email-last', methods=['GET'])
+def backup_email_last():
+    return jsonify({'last': _get_meta('backup_email_last')})
+
+
 @app.route('/api/backup/restore', methods=['POST'])
 def backup_restore():
     """백업 DB 파일을 올려 전체 데이터를 복원(현재 데이터는 백업본으로 덮어씀)."""
@@ -804,6 +874,31 @@ def purchase_history_delete_buyer():
         conn.close()
 
 
+def _ensure_meta(conn):
+    conn.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
+
+
+def _set_meta(key, value):
+    conn = get_conn()
+    _ensure_meta(conn)
+    conn.execute("INSERT OR REPLACE INTO app_meta (key,value) VALUES (?,?)", (key, value))
+    conn.commit()
+    conn.close()
+
+
+def _get_meta(key):
+    conn = get_conn()
+    _ensure_meta(conn)
+    r = conn.execute("SELECT value FROM app_meta WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return r['value'] if r else None
+
+
+@app.route('/api/bank/last-import', methods=['GET'])
+def bank_last_import():
+    return jsonify({'last': _get_meta('bank_import_last')})
+
+
 @app.route('/api/bank/import-history', methods=['POST'])
 def bank_import_history():
     """은행 입출금 엑셀(국민/농협 등) 업로드 → 입금건을 이름별로 구매이력에 누적.
@@ -864,7 +959,9 @@ def bank_import_history():
     total = conn.execute("SELECT COUNT(*) AS c FROM bank_history").fetchone()['c']
     conn.close()
     logger.info(f"🏦 은행 입금 가져오기: 스캔 {scanned}, 신규 {added}, 누적 {total}")
-    return jsonify({'ok': True, 'added': added, 'scanned': scanned, 'total': total, 'files': per_file})
+    _bank_ts = now_kst().isoformat()
+    _set_meta('bank_import_last', _bank_ts)
+    return jsonify({'ok': True, 'added': added, 'scanned': scanned, 'total': total, 'files': per_file, 'last': _bank_ts})
 
 
 @app.route('/api/imweb/import', methods=['POST'])
@@ -2812,6 +2909,9 @@ def _ensure_scheduler():
         sched.add_job(run_auto_check, 'interval', minutes=15,
                       id='interval_check', replace_existing=True,
                       next_run_time=now_kst() + timedelta(seconds=10))
+        # 7일에 한 번(매주 일요일) 오후 11시 KST 전체 백업 메일 전송
+        sched.add_job(send_backup_email, 'cron', day_of_week='sun', hour=23, minute=0,
+                      id='weekly_backup_email', replace_existing=True)
         sched.start()
         _SCHEDULER_STARTED = True
         logger.info("⏰ 스케줄러 시작 (10초 후 1회 + 15분마다)")
