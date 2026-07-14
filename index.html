@@ -460,7 +460,7 @@ code { background: var(--surface2); border: 1px solid var(--border); border-radi
       <button class="btn" style="background:#2563eb;color:#fff;padding:6px 12px;" onclick="backupAll()" title="모든 데이터를 파일 하나로 백업">💾 전체 백업</button>
       <input type="file" id="restoreFileInput" accept=".db,.sqlite,.sqlite3" style="display:none;" onchange="restoreAll(this.files)">
       <button class="btn" style="background:#6b7280;color:#fff;padding:6px 12px;" onclick="document.getElementById('restoreFileInput').click()" title="백업 파일로 전체 복원">♻ 복원</button>
-      <button class="btn" style="background:#7c3aed;color:#fff;padding:6px 12px;" onclick="emailBackupNow()" title="지금 전체 백업을 Gmail로 전송(테스트). 매주 일요일 23시에 자동 전송됩니다.">📧 메일백업 테스트</button>
+      <button class="btn" style="background:#7c3aed;color:#fff;padding:6px 12px;" onclick="driveBackupNow()" title="지금 전체 백업을 구글 드라이브에 업로드(테스트). 매주 일요일 23시에 자동 누적 업로드됩니다.">☁️ 드라이브 백업 테스트</button>
       <span id="backupEmailInfo" style="font-size:11px;color:var(--muted);align-self:center;"></span>
     </span>
     <span id="loginWho" style="font-size:13px;color:var(--muted);"></span>
@@ -1350,7 +1350,7 @@ async function checkServer(showToast) {
       document.getElementById('serverDot').classList.add('on');
       document.getElementById('serverLabel').textContent = '서버 연결됨 (Online)';
       if (showToast) { toast('✅ 서버 연결 확인됨', 'ok'); updateGuideBanner(true); }
-      try { loadBackupEmailLast(); } catch(e) {}
+      try { loadDriveLast(); } catch(e) {}
       return true;
     }
   } catch(e) {}
@@ -1893,7 +1893,7 @@ function _renderHistory(rows) {
   if (sort === 'amt_desc') groups.sort((a,b)=>b.sum-a.sum);
   else if (sort === 'amt_asc') groups.sort((a,b)=>a.sum-b.sum);
   const statusKr = {confirmed:'입금확인', pending:'대기'};
-  const cap = 2000;
+  const cap = 800;
   let html = '', rendered = 0, cut = false;
   for (const g of groups) {
     if (rendered >= cap) { cut = true; break; }
@@ -2874,14 +2874,17 @@ async function downloadConsignImage(btn, consignor) {
 let _membersAll = [];
 let _membersEditMode = false;   // false=복사모드(기본), true=수정모드
 function _esc(s){ return (s||'').toString().replace(/[<>"'&]/g, c=>({"<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","&":"&amp;"})[c]); }
-function _renderMembersFiltered(filtered) {
+function _renderMembersFiltered(filtered, showAll) {
+  window._membersLastFiltered = filtered;
   const tb = document.getElementById('membersTbody');
   document.getElementById('members-count').textContent = `(${filtered.length}/${_membersAll.length}명)`;
   if (!filtered.length) {
     tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px;">검색 결과 없음</td></tr>';
     return;
   }
-  tb.innerHTML = filtered.map(m => {
+  const LIMIT = 300;
+  const rows = showAll ? filtered : filtered.slice(0, LIMIT);
+  tb.innerHTML = rows.map(m => {
     let cell;
     if (_membersEditMode) {
       // 수정모드: 클릭하면 편집 가능 + 자동저장
@@ -2899,7 +2902,7 @@ function _renderMembersFiltered(filtered) {
         <td style="word-break:break-all;white-space:normal;color:var(--muted);">${cell('message', m.message||'')}</td>
         <td><button class="btn" style="padding:4px 8px;background:#666;color:#fff;" onclick="deleteMember(${m.id})">🗑</button></td>
       </tr>`;
-  }).join('');
+  }).join('') + (filtered.length > rows.length ? `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px;">${filtered.length}명 중 ${rows.length}명 표시 · 검색으로 좁히거나 <button class="btn btn-secondary" style="padding:3px 10px;font-size:12px;" onclick="_renderMembersFiltered(window._membersLastFiltered, true)">전체 표시</button></td></tr>` : '');
 }
 
 // ✏ 수정모드 ↔ 복사모드 토글
@@ -3045,7 +3048,8 @@ async function deleteMember(id) {
 // v17: 총 판매품 리스트
 // ══════════════════════════════════════════════════════════════════
 let _catalogAll = [];
-function _renderCatalogFiltered(filtered) {
+function _renderCatalogFiltered(filtered, showAll) {
+  window._catalogLastFiltered = filtered;
   const tb = document.getElementById('catalogTbody');
   document.getElementById('catalog-count').textContent = `(${filtered.length}/${_catalogAll.length}건)`;
   if (!filtered.length) {
@@ -3053,7 +3057,9 @@ function _renderCatalogFiltered(filtered) {
     return;
   }
   const fmtP = (n) => (n == null || n === '' ? '' : Number(n).toLocaleString());
-  tb.innerHTML = filtered.map(p => {
+  const LIMIT = 300;
+  const rows = showAll ? filtered : filtered.slice(0, LIMIT);
+  tb.innerHTML = rows.map(p => {
     const ed = (field, val) => `<span class="ed" contenteditable="true" data-id="${p.id}" data-field="${field}" onblur="saveCatalogField(this)">${_esc(val)}</span>`;
     return `
       <tr>
@@ -3064,7 +3070,7 @@ function _renderCatalogFiltered(filtered) {
         <td style="text-align:center;color:var(--muted);">${ed('remaining', p.remaining||'')}</td>
         <td style="text-align:center;"><button class="btn" style="padding:4px 8px;background:#666;color:#fff;" onclick="deleteCatalogItem(${p.id})">🗑</button></td>
       </tr>`;
-  }).join('');
+  }).join('') + (filtered.length > rows.length ? `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px;">${filtered.length}건 중 ${rows.length}건 표시 · 검색으로 좁히거나 <button class="btn btn-secondary" style="padding:3px 10px;font-size:12px;" onclick="_renderCatalogFiltered(window._catalogLastFiltered, true)">전체 표시</button></td></tr>` : '');
 }
 async function loadCatalog() {
   try {
@@ -3962,6 +3968,23 @@ async function emailBackupNow() {
     if (d.ok) { toast('📧 ' + d.message, 'ok'); setBackupEmailLast(d.last); }
     else toast('실패: ' + (d.message||''), 'err');
   } catch(e) { toast('서버 연결 실패', 'err'); }
+}
+function setDriveLast(ts) {
+  const el = document.getElementById('backupEmailInfo'); if (!el) return;
+  el.textContent = ts ? ('☁️ 마지막 드라이브 백업: ' + String(ts).slice(0,16).replace('T',' ')) : '';
+}
+async function loadDriveLast() {
+  try { const r = await fetch(API + '/api/backup/drive-last'); const d = await r.json(); setDriveLast(d.last); } catch(e) {}
+}
+async function driveBackupNow() {
+  if (!confirm('지금 전체 백업을 구글 드라이브에 올릴까요?\n(Railway 환경변수 GDRIVE_CLIENT_ID / SECRET / REFRESH_TOKEN 설정이 되어 있어야 합니다. 사진 포함이라 시간이 조금 걸릴 수 있어요.)')) return;
+  toast('☁️ 드라이브 업로드 중... (사진 포함, 잠시 대기)', 'ok');
+  try {
+    const r = await fetch(API + '/api/backup/drive-now', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) { toast('☁️ ' + d.message, 'ok'); setDriveLast(d.last); }
+    else toast('실패: ' + (d.message||''), 'err');
+  } catch(e) { toast('서버 연결 실패(업로드 지연일 수 있음)', 'err'); }
 }
 function backupAll() {
   const a = document.createElement('a');
