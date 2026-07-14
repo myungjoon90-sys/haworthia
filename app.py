@@ -681,6 +681,44 @@ def _make_backup_bytes():
     return data, "haworthia_backup_%s.db" % now_kst().strftime('%Y%m%d_%H%M')
 
 
+def _make_data_backup_bytes():
+    """사진(BLOB) 제외 '데이터 전용' 백업 — 메일 첨부용 용량 축소."""
+    import tempfile, sqlite3
+    conn = get_conn()
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.db'); tmp.close()
+        dst = sqlite3.connect(tmp.name)
+        with dst:
+            conn.backup(dst)
+        dst.close()
+    finally:
+        conn.close()
+    try:
+        d2 = sqlite3.connect(tmp.name)
+        for stmt in ("DELETE FROM zong_photos",
+                     "UPDATE zong_items SET img=NULL",
+                     "UPDATE shira_items SET img=NULL"):
+            try:
+                d2.execute(stmt)
+            except Exception:
+                pass
+        d2.commit()
+        try:
+            d2.execute("VACUUM")
+        except Exception:
+            pass
+        d2.close()
+    except Exception:
+        pass
+    with open(tmp.name, 'rb') as f:
+        data = f.read()
+    try:
+        os.remove(tmp.name)
+    except Exception:
+        pass
+    return data, "haworthia_databackup_%s.db" % now_kst().strftime('%Y%m%d_%H%M')
+
+
 def send_backup_email():
     """전체 백업(.db)을 Gmail로 첨부 전송. 환경변수 BACKUP_EMAIL_USER/PASS/TO 사용."""
     import smtplib, ssl
@@ -692,7 +730,7 @@ def send_backup_email():
         logger.warning("📧 백업메일: 환경변수(BACKUP_EMAIL_USER/BACKUP_EMAIL_PASS) 미설정")
         return False, '환경변수 BACKUP_EMAIL_USER / BACKUP_EMAIL_PASS 를 먼저 설정하세요'
     try:
-        data, fname = _make_backup_bytes()
+        data, fname = _make_data_backup_bytes()
     except Exception as e:
         logger.exception("백업 생성 실패")
         return False, '백업 생성 실패: %s' % e
@@ -704,7 +742,7 @@ def send_backup_email():
     msg['Subject'] = '[지양하월시아] 전체 백업 %s' % ts
     msg['From'] = user
     msg['To'] = to
-    msg.set_content('지양하월시아 입금확인 시스템 자동 백업입니다.\n첨부된 .db 파일을 보관하세요.\n생성: %s (KST)' % ts)
+    msg.set_content('지양하월시아 입금확인 시스템 자동 데이터백업입니다.\n주문/회원/주소/구매이력/정산/매핑/은행 등 핵심 데이터가 모두 담겨 있습니다.\n(사진은 용량상 제외 — Shira PDF/Zong 엑셀 재업로드로 복구)\n생성: %s (KST)' % ts)
     msg.add_attachment(data, maintype='application', subtype='octet-stream', filename=fname)
     try:
         ctx = ssl.create_default_context()
@@ -729,6 +767,90 @@ def backup_email_now():
 @app.route('/api/backup/email-last', methods=['GET'])
 def backup_email_last():
     return jsonify({'last': _get_meta('backup_email_last')})
+
+
+def _gdrive_token():
+    import requests
+    cid = os.environ.get('GDRIVE_CLIENT_ID')
+    cs = os.environ.get('GDRIVE_CLIENT_SECRET')
+    rt = os.environ.get('GDRIVE_REFRESH_TOKEN')
+    if not (cid and cs and rt):
+        return None, '환경변수 GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET / GDRIVE_REFRESH_TOKEN 를 먼저 설정하세요'
+    try:
+        r = requests.post('https://oauth2.googleapis.com/token', timeout=30, data={
+            'client_id': cid, 'client_secret': cs, 'refresh_token': rt, 'grant_type': 'refresh_token'})
+    except Exception as e:
+        return None, '토큰 요청 오류: %s' % e
+    if r.status_code != 200:
+        return None, '토큰 발급 실패: %s' % r.text[:200]
+    return r.json().get('access_token'), None
+
+
+def _gdrive_folder(token):
+    import requests
+    fid = _get_meta('gdrive_folder_id')
+    if fid:
+        return fid
+    name = os.environ.get('GDRIVE_FOLDER_NAME') or '지양하월시아_백업'
+    h = {'Authorization': 'Bearer ' + token}
+    try:
+        q = "mimeType='application/vnd.google-apps.folder' and trashed=false and name='%s'" % name.replace("'", "\\'")
+        r = requests.get('https://www.googleapis.com/drive/v3/files', headers=h, timeout=30,
+                         params={'q': q, 'fields': 'files(id,name)', 'spaces': 'drive'})
+        files = r.json().get('files', []) if r.status_code == 200 else []
+        if files:
+            fid = files[0]['id']
+        else:
+            r2 = requests.post('https://www.googleapis.com/drive/v3/files', headers=h, timeout=30,
+                               json={'name': name, 'mimeType': 'application/vnd.google-apps.folder'})
+            fid = r2.json().get('id')
+        if fid:
+            _set_meta('gdrive_folder_id', fid)
+    except Exception:
+        fid = None
+    return fid
+
+
+def upload_backup_to_drive():
+    """전체 백업(.db, 사진 포함)을 구글 드라이브 폴더에 새 파일로 업로드(누적)."""
+    import requests
+    token, err = _gdrive_token()
+    if err:
+        logger.warning('☁️ 드라이브 백업: %s' % err)
+        return False, err
+    try:
+        fid = _gdrive_folder(token)
+        data, fname = _make_backup_bytes()
+        meta = {'name': fname}
+        if fid:
+            meta['parents'] = [fid]
+        h = {'Authorization': 'Bearer ' + token}
+        r = requests.post('https://www.googleapis.com/drive/v3/files', headers=h, json=meta, timeout=60)
+        if r.status_code not in (200, 201):
+            return False, '드라이브 파일 생성 실패: %s' % r.text[:200]
+        file_id = r.json().get('id')
+        h2 = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/octet-stream'}
+        r2 = requests.patch('https://www.googleapis.com/upload/drive/v3/files/%s?uploadType=media' % file_id,
+                            headers=h2, data=data, timeout=300)
+        if r2.status_code not in (200, 201):
+            return False, '드라이브 업로드 실패: %s' % r2.text[:200]
+        _set_meta('backup_drive_last', now_kst().isoformat())
+        logger.info('☁️ 드라이브 백업 완료 %s (%.1fMB)' % (fname, len(data) / 1024 / 1024))
+        return True, '드라이브 업로드 완료: %s (%.1fMB)' % (fname, len(data) / 1024 / 1024)
+    except Exception as e:
+        logger.exception('드라이브 업로드 실패')
+        return False, str(e)
+
+
+@app.route('/api/backup/drive-now', methods=['POST'])
+def backup_drive_now():
+    ok, message = upload_backup_to_drive()
+    return jsonify({'ok': ok, 'message': message, 'last': _get_meta('backup_drive_last')})
+
+
+@app.route('/api/backup/drive-last', methods=['GET'])
+def backup_drive_last():
+    return jsonify({'last': _get_meta('backup_drive_last')})
 
 
 @app.route('/api/backup/restore', methods=['POST'])
@@ -2904,14 +3026,15 @@ def _ensure_scheduler():
     if _SCHEDULER_STARTED:
         return
     try:
+        _optimize_db()
         sched = BackgroundScheduler(timezone='Asia/Seoul')
         # 첫 실행: 서버 기동 10초 뒤 즉시 1회 → 이후 15분마다
         sched.add_job(run_auto_check, 'interval', minutes=15,
                       id='interval_check', replace_existing=True,
                       next_run_time=now_kst() + timedelta(seconds=10))
-        # 7일에 한 번(매주 일요일) 오후 11시 KST 전체 백업 메일 전송
-        sched.add_job(send_backup_email, 'cron', day_of_week='sun', hour=23, minute=0,
-                      id='weekly_backup_email', replace_existing=True)
+        # 7일에 한 번(매주 일요일) 오후 11시 KST 전체 백업 → 구글 드라이브 누적 업로드
+        sched.add_job(upload_backup_to_drive, 'cron', day_of_week='sun', hour=23, minute=0,
+                      id='weekly_backup_drive', replace_existing=True)
         sched.start()
         _SCHEDULER_STARTED = True
         logger.info("⏰ 스케줄러 시작 (10초 후 1회 + 15분마다)")
@@ -2923,6 +3046,56 @@ def _ensure_scheduler():
 # ══════════════════════════════════════════════════════════════════
 #  🛍 Shira — 대만 위탁 상품 (월별 PDF 누적, 판매/정산 체크, 수수료 정산)
 # ══════════════════════════════════════════════════════════════════
+def _img_response(data):
+    """이미지 응답에 브라우저 캐시(1일)+ETag 부여 → 재로딩 최소화(렉 방지)."""
+    import hashlib
+    from flask import request as _rq, Response
+    etag = '"' + hashlib.md5(data).hexdigest() + '"'
+    if _rq.headers.get('If-None-Match') == etag:
+        r = Response(status=304)
+    else:
+        r = send_file(BytesIO(data), mimetype='image/jpeg')
+    r.headers['ETag'] = etag
+    r.headers['Cache-Control'] = 'public, max-age=86400'
+    return r
+
+
+def _optimize_db():
+    """WAL 저널 + 인덱스 생성 → 데이터가 많아져도 조회 속도 유지."""
+    try:
+        conn = get_conn()
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA cache_size=-16000")
+        except Exception:
+            pass
+        for q in (
+            "CREATE INDEX IF NOT EXISTS idx_orders_session ON orders(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_orders_buyer ON orders(buyer_name)",
+            "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)",
+            "CREATE INDEX IF NOT EXISTS idx_orders_sb ON orders(session_id, buyer_name)",
+            "CREATE INDEX IF NOT EXISTS idx_bstatus_sb ON buyer_status(session_id, buyer_name)",
+            "CREATE INDEX IF NOT EXISTS idx_imweb_buyer ON imweb_history(buyer_name)",
+            "CREATE INDEX IF NOT EXISTS idx_bank_buyer ON bank_history(buyer_name)",
+            "CREATE INDEX IF NOT EXISTS idx_zphotos_item ON zong_photos(item_no)",
+            "CREATE INDEX IF NOT EXISTS idx_zitems_num ON zong_items(num)",
+            "CREATE INDEX IF NOT EXISTS idx_zitems_sig ON zong_items(sig)",
+            "CREATE INDEX IF NOT EXISTS idx_shira_month ON shira_items(month)",
+            "CREATE INDEX IF NOT EXISTS idx_nick_nick ON nick_mappings(nickname)",
+        ):
+            try:
+                conn.execute(q)
+            except Exception:
+                pass
+        conn.commit()
+        conn.close()
+        logger.info("🚀 DB 최적화 적용 (WAL + 인덱스)")
+    except Exception as e:
+        logger.warning("DB 최적화 실패: %s" % e)
+
+
 def _shira_dir():
     d = os.path.join(os.path.dirname(DB_PATH), 'shira_img')
     try:
@@ -3072,7 +3245,7 @@ def shira_photo(item_no):
     row = conn.execute("SELECT img FROM shira_items WHERE item_no=?", (item_no,)).fetchone()
     conn.close()
     if row is not None and row['img']:
-        return send_file(_io.BytesIO(row['img']), mimetype='image/jpeg')
+        return _img_response(row['img'])
     p = os.path.join(_shira_dir(), item_no + '.jpg')
     if os.path.exists(p):
         return send_file(p, mimetype='image/jpeg')
@@ -3536,7 +3709,7 @@ def zong_photo(item_no):
         row = conn.execute("SELECT img FROM zong_items WHERE item_no=?", (item_no,)).fetchone()
     conn.close()
     if row is not None and row['img']:
-        return send_file(_io.BytesIO(row['img']), mimetype='image/jpeg')
+        return _img_response(row['img'])
     p = os.path.join(_zong_dir(), item_no + '.jpg')
     if os.path.exists(p):
         return send_file(p, mimetype='image/jpeg')
@@ -3552,7 +3725,7 @@ def zong_photo_kind(item_no, kind, idx):
                        (item_no, kind, idx)).fetchone()
     conn.close()
     if row is not None and row['img']:
-        return send_file(_io.BytesIO(row['img']), mimetype='image/jpeg')
+        return _img_response(row['img'])
     return ('', 404)
 
 
